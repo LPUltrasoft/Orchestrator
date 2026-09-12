@@ -1,0 +1,16 @@
+[Unit]
+Description=Orchestrator Gateway (puente n8n <-> agentes agy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documentos/Orchestrator
+ExecStart=/usr/bin/env bash -lc 'uv run --project gateway python -m gateway.main'
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Delega una tarea a un sub-agente a través del gateway.
+# Uso: orc-delegate <rol> <proyecto> "<instrucción>"
+set -euo pipefail
+
+if [[ $# -lt 3 ]]; then
+  echo "Uso: orc-delegate <producto|dba|nestjs> <proyecto> \"<instrucción>\"" >&2
+  exit 64
+fi
+
+ROLE="$1"; PROJECT="$2"; shift 2; INSTRUCTION="$*"
+GATEWAY="${ORC_GATEWAY_URL:-http://127.0.0.1:8787}"
+TOKEN="${ORC_TOKEN:-}"
+
+if [[ -z "$TOKEN" ]]; then
+  echo '{"status":"ERROR","error":"ORC_TOKEN no está en el entorno"}' >&2
+  exit 78
+fi
+
+PAYLOAD=$(PROJECT="$PROJECT" INSTRUCTION="$INSTRUCTION" python3 -c '
+import json, os
+print(json.dumps({"project": os.environ["PROJECT"], "instruction": os.environ["INSTRUCTION"]}))
+')
+
+# Sin --max-time: un sub-agente puede tardar varios minutos legítimamente.
+curl -sS -X POST "$GATEWAY/agents/$ROLE" \
+  -H "Content-Type: application/json" \
+  -H "X-Orc-Token: $TOKEN" \
+  --data "$PAYLOAD"

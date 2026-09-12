@@ -1,0 +1,11 @@
+[project]
+name = "orchestrator-gateway"
+version = "1.0.0"
+description = "Puente HTTP entre n8n/Telegram y los agentes agy del host"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+]

@@ -1,0 +1,23 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
+      - TZ=America/Argentina/Buenos_Aires
+      # Acceso por localhost sin HTTPS: sin esto no se puede iniciar sesión.
+      - N8N_SECURE_COOKIE=false
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+    extra_hosts:
+      # En Linux, host.docker.internal no existe por defecto: esto es lo que
+      # le permite al contenedor llegar al gateway que corre en el host.
+      - "host.docker.internal:host-gateway"
