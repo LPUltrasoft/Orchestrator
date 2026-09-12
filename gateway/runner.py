@@ -121,6 +121,18 @@ async def run_agy(
         raise RuntimeError(f"agy salió con código {process.returncode}: {stderr[-2000:]}")
 
     data = _parse_output(stdout)
+
+    # En headless, un tool sin allow-rule se auto-deniega y la respuesta vuelve vacía.
+    denied = data.get("denied_actions") or []
+    if denied and not (data.get("response") or "").strip():
+        names = ", ".join(d.get("display_name") or d.get("action", "?") for d in denied)
+        raise RuntimeError(
+            f"agy denegó herramientas por falta de permisos en headless: {names}. "
+            f"Agregá la allow-rule correspondiente en "
+            f"~/.gemini/antigravity-cli/settings.json (permissions.allow), "
+            f"por ejemplo command(orc-delegate)."
+        )
+
     # Respuesta vacía con usage en cero = el turno nunca corrió de verdad.
     if not (data.get("response") or "").strip():
         usage = data.get("usage") or {}
@@ -164,16 +176,17 @@ async def invoke_subagent(role: str, project: str, instruction: str) -> dict:
     if role not in config.ROLES:
         raise ValueError(f"rol desconocido: {role}. Válidos: {', '.join(config.ROLES)}")
 
-    project_path = vault.project_dir(project)
+    project_path = await asyncio.to_thread(vault.project_dir, project)
     with project_lock(project):
-        before = vault.snapshot()
+        before = await asyncio.to_thread(vault.snapshot)
         result = await run_agy(
             prompt=build_subagent_prompt(role, project, instruction, project_path),
             model=config.MODELS[role],
             cwd=project_path,
         )
-        files_changed = vault.changed_since(before)
-        commit_hash = vault.commit(role, project, files_changed)
+        # git bloquea: fuera del event loop para no frenar las demás requests.
+        files_changed = await asyncio.to_thread(vault.changed_since, before)
+        commit_hash = await asyncio.to_thread(vault.commit, role, project, files_changed)
 
     claimed = bool(re.search(r"escrib|cre[éeo]|actualic|modific", result.get("response", ""), re.I))
     return {

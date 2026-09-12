@@ -3,8 +3,47 @@
 # Uso: orc-delegate <rol> <proyecto> "<instrucción>"
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+orc-delegate — delega una tarea a un sub-agente especializado.
+
+USO
+  orc-delegate <rol> <proyecto> "<instrucción>"
+
+ROLES
+  producto   Requerimientos, reglas de negocio, visión. Escribe los documentos 00 y 01.
+  dba        Modelo de datos, DER, DDL, migraciones. Escribe el documento 03.
+  nestjs     Arquitectura backend y contratos de API. Escribe los documentos 02 y 04.
+
+ARGUMENTOS
+  <proyecto>      Nombre de la carpeta del proyecto en el vault. Entre comillas si
+                  tiene espacios. Se crea si no existe.
+  "<instrucción>" Tarea autocontenida: el sub-agente no ve tu conversación, así que
+                  incluí todo el contexto que necesite.
+
+EJEMPLO
+  orc-delegate dba "Sistema de Turnos Medicos" "Disenia el modelo de datos en
+  PostgreSQL a partir de los requerimientos del documento 01. Incluí DER en mermaid,
+  DDL ejecutable y changelogs de Liquibase."
+
+SALIDA
+  JSON con: status, response (el resumen del sub-agente), files_changed (los archivos
+  que realmente cambiaron, verificado con git), commit y suspect_no_writes.
+  Confiá en files_changed, no en lo que diga response.
+
+NOTAS
+  Es bloqueante y puede tardar varios minutos: es normal, esperá.
+  Un solo sub-agente por proyecto a la vez; si hay otro trabajando devuelve error 409.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 if [[ $# -lt 3 ]]; then
-  echo "Uso: orc-delegate <producto|dba|nestjs> <proyecto> \"<instrucción>\"" >&2
+  usage >&2
   exit 64
 fi
 

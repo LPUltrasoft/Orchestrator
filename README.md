@@ -44,7 +44,28 @@ $EDITOR .env           # revisá VAULT_PATH y los modelos
 
 `agy models` lista los modelos disponibles para `MODEL_*`.
 
-### 2. Levantar el gateway
+### 2. Permisos de `agy` (obligatorio)
+
+En headless, `agy` **auto-deniega** cualquier comando shell que no tenga allow-rule:
+la respuesta vuelve vacía con `status: SUCCESS` y un campo `denied_actions`. Sin esto
+el orquestador nunca puede delegar.
+
+En `~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["command(orc-delegate)", "command(which)", "command(ls)"]
+  },
+  "trustedWorkspaces": ["/home/lpalmieri"]
+}
+```
+
+Las reglas matchean **por prefijo del comando**: `command(orc-delegate)` permite
+`orc-delegate dba "..."` pero no `which orc-delegate`. Hacé backup del archivo antes
+de editarlo: `agy` lo sobrescribe si no lo puede parsear.
+
+### 3. Levantar el gateway
 
 ```bash
 uv sync --project gateway
@@ -61,7 +82,7 @@ systemctl --user enable --now orchestrator-gateway
 journalctl --user -u orchestrator-gateway -f
 ```
 
-### 3. Levantar n8n
+### 4. Levantar n8n
 
 ```bash
 docker compose up -d
@@ -69,7 +90,7 @@ docker compose up -d
 
 Entrá a http://localhost:5678 y creá la cuenta local.
 
-### 4. Importar el workflow
+### 5. Importar el workflow
 
 1. **Workflows → Import from File** → `n8n/workflow-telegram-orchestrator.json`.
 2. Creá la credencial **Telegram account** con el token que te da @BotFather y
@@ -139,6 +160,11 @@ curl -sS -X POST localhost:8787/agents/producto \
 
 ## Gotcha importante
 
-`agy -p` **sin `--mode accept-edits` no ejecuta herramientas pero responde como si
-las hubiera ejecutado.** Por eso `runner.py` siempre lo pasa. Si algún día los
-agentes "dicen que escriben" y el vault no cambia, es lo primero que hay que mirar.
+Hay dos formas en que `agy` falla en silencio, y las dos se ven igual desde afuera:
+
+1. **`agy -p` sin `--mode accept-edits` no ejecuta herramientas pero responde como si
+   las hubiera ejecutado.** Por eso `runner.py` siempre lo pasa. Si los agentes "dicen
+   que escriben" y el vault no cambia, es lo primero que hay que mirar.
+2. **Un comando sin allow-rule se auto-deniega** y devuelve `response` vacío con
+   `status: SUCCESS`. El gateway lo detecta vía `denied_actions` y te dice qué regla
+   falta (ver paso 2 de la instalación).

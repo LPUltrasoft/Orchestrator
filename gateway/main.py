@@ -124,6 +124,9 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
 @app.post("/chat", dependencies=[Depends(auth)], status_code=202)
 async def chat(body: ChatIn, background: BackgroundTasks) -> dict:
     """Entrada desde Telegram. Responde al instante; el trabajo sigue en background."""
+    if not config.chat_allowed(body.chat_id):
+        log.warning("chat no autorizado intentó usar el bot: %s", body.chat_id)
+        raise HTTPException(403, "este chat no está autorizado")
     job_id = jobs.create("orchestrator", {"chat_id": body.chat_id, "text": body.text[:500]})
     background.add_task(_run_orchestrator, job_id, body)
     return {"job_id": job_id, "status": "running"}

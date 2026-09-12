@@ -33,6 +33,11 @@ ORCHESTRATOR_MAX_TURNS = int(os.environ.get("ORCHESTRATOR_MAX_TURNS", "25"))
 
 N8N_CALLBACK_URL = os.environ.get("N8N_CALLBACK_URL", "")
 
+# Solo estos chat_id de Telegram pueden dar órdenes. Vacío = cualquiera (no recomendado).
+ALLOWED_CHAT_IDS = {
+    c.strip() for c in os.environ.get("ALLOWED_CHAT_IDS", "").split(",") if c.strip()
+}
+
 MODELS = {
     "orchestrator": os.environ.get("MODEL_ORCHESTRATOR", "gemini-3.8-flash-high"),
     "producto": os.environ.get("MODEL_PRODUCTO", "gemini-3.8-flash-high"),
@@ -57,6 +62,10 @@ def projects_root() -> Path:
 
 def prompt_for(role: str) -> str:
     return (PROMPTS_DIR / f"{role}.md").read_text(encoding="utf-8")
+
+
+def chat_allowed(chat_id: str) -> bool:
+    return not ALLOWED_CHAT_IDS or str(chat_id) in ALLOWED_CHAT_IDS
 
 
 def validate() -> list[str]:
