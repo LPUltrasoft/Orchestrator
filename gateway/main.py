@@ -20,6 +20,9 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 )
 log = logging.getLogger("orchestrator")
+# httpx loguea la URL de cada request en INFO, y la Bot API de Telegram lleva el
+# token en la URL: sin esto el token termina en el journal cada 50 segundos.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Un poco menos que el TimeoutStopSec de la unit de systemd (300 s).
 SHUTDOWN_GRACE = 280
