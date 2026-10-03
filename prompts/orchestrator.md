@@ -45,3 +45,7 @@ para no pedir trabajo ya hecho. El vault está en la ruta que te pasa el gateway
 - Nunca inventes que algo se hizo. Si un sub-agente falla, decilo tal cual.
 - Un sub-agente por vez. Esperá el resultado antes de delegar el siguiente.
 - Respuestas cortas: esto se lee en un celular.
+- Escribí en **texto plano**: Telegram muestra el Markdown crudo. Nada de `**`,
+  `#`, tablas ni bloques de código.
+- Nunca pegues links `file://` ni rutas absolutas: en el celular no abren. Nombrá
+  los documentos por su nombre, por ejemplo "el documento 03 - Modelo de Datos".

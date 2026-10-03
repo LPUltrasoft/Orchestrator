@@ -6,9 +6,17 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/Documentos/Orchestrator
-ExecStart=/usr/bin/env bash -lc 'uv run --project gateway python -m gateway.main'
+# Rutas absolutas: al bootear no hay shell de login que arme el PATH.
+ExecStart=%h/.local/bin/uv run --project gateway python -m gateway.main
+# agy, uv y orc-delegate (que usa curl y python3) tienen que estar en el PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=5
+# Un restart no debe matar a los agentes en vuelo: SIGTERM solo a uvicorn, que
+# espera a que terminen los requests y las tareas en background. Los procesos agy
+# reciben SIGKILL recién si eso tarda más de TimeoutStopSec.
+KillMode=mixed
+TimeoutStopSec=300
 StandardOutput=journal
 StandardError=journal
 

@@ -15,7 +15,11 @@ from . import config
 def _git(*args: str, cwd: Path | None = None) -> str:
     result = subprocess.run(
         # quotePath=false: sin esto git escapa los acentos como \303\215.
-        ["git", "-c", "core.quotePath=false", *args],
+        # hooksPath y fsmonitor anulados: un agente con permiso de `git config`
+        # podría plantar un comando ahí y el gateway lo ejecutaría en su próximo
+        # status o commit.
+        ["git", "-c", "core.quotePath=false", "-c", "core.hooksPath=/dev/null",
+         "-c", "core.fsmonitor=false", *args],
         cwd=str(cwd or config.VAULT_PATH),
         capture_output=True,
         text=True,
@@ -58,12 +62,13 @@ def changed_since(before: dict) -> list[str]:
     return sorted(changed)
 
 
-def commit(role: str, project: str, files: list[str]) -> str | None:
+def commit(role: str, project: str, files: list[str], complete: bool = True) -> str | None:
     """Commitea los cambios del turno. Devuelve el hash corto, o None."""
     if not config.VAULT_AUTOCOMMIT or not files:
         return None
     _git("add", "-A")
-    message = f"{role}: actualiza {project}\n\nArchivos:\n" + "\n".join(
+    prefix = "" if complete else "[INCOMPLETO] "
+    message = f"{prefix}{role}: actualiza {project}\n\nArchivos:\n" + "\n".join(
         f"- {f}" for f in files[:20]
     )
     try:

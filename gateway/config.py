@@ -19,7 +19,7 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-HOST = os.environ.get("GATEWAY_HOST", "0.0.0.0")
+HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 TOKEN = os.environ.get("GATEWAY_TOKEN", "")
 
@@ -31,6 +31,12 @@ AGY_BIN = os.environ.get("AGY_BIN", "agy")
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "900"))
 ORCHESTRATOR_MAX_TURNS = int(os.environ.get("ORCHESTRATOR_MAX_TURNS", "25"))
 
+# Telegram por long polling: el gateway habla directo con la Bot API.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org")
+TELEGRAM_POLL_TIMEOUT = int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "50"))
+
+# Alternativa: n8n como puerta de Telegram (requiere túnel HTTPS, ver n8n/README.md).
 N8N_CALLBACK_URL = os.environ.get("N8N_CALLBACK_URL", "")
 
 # Solo estos chat_id de Telegram pueden dar órdenes. Vacío = cualquiera (no recomendado).
@@ -41,13 +47,17 @@ ALLOWED_CHAT_IDS = {
 MODELS = {
     "orchestrator": os.environ.get("MODEL_ORCHESTRATOR", "gemini-3.8-flash-high"),
     "producto": os.environ.get("MODEL_PRODUCTO", "gemini-3.8-flash-high"),
-    "dba": os.environ.get("MODEL_DBA", "claude-sonnet-4-6"),
-    "nestjs": os.environ.get("MODEL_NESTJS", "claude-sonnet-4-6"),
+    "dba": os.environ.get("MODEL_DBA", "gemini-3.1-pro-high"),
+    "nestjs": os.environ.get("MODEL_NESTJS", "gemini-3.1-pro-high"),
 }
 
 ROLES = ("producto", "dba", "nestjs")
 
-STATE_DIR = ROOT / "state"
+# Modelos que agy ofrece hoy. Se llena al arrancar: Antigravity retira modelos sin
+# aviso (Sonnet 4.6 desapareció entre septiembre y octubre de 2026).
+KNOWN_MODELS: set[str] | None = None
+
+STATE_DIR = Path(os.environ.get("ORC_STATE_DIR", ROOT / "state"))
 LOCK_DIR = STATE_DIR / "locks"
 PROMPTS_DIR = ROOT / "prompts"
 BIN_DIR = ROOT / "bin"
@@ -82,4 +92,14 @@ def validate() -> list[str]:
     for role in ROLES + ("orchestrator",):
         if not (PROMPTS_DIR / f"{role}.md").exists():
             problems.append(f"falta prompts/{role}.md")
+    if not TELEGRAM_BOT_TOKEN and not N8N_CALLBACK_URL:
+        problems.append(
+            "sin canal de Telegram: definí TELEGRAM_BOT_TOKEN (token de @BotFather)"
+        )
+    if KNOWN_MODELS:
+        for role, model in MODELS.items():
+            if model not in KNOWN_MODELS:
+                problems.append(
+                    f"el modelo de '{role}' ({model}) no existe en agy. Ver `agy models`."
+                )
     return problems

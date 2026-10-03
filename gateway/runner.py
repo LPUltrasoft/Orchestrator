@@ -159,6 +159,13 @@ def build_subagent_prompt(role: str, project: str, instruction: str, project_pat
 
 Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 
+# Herramientas
+
+Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,
+`grep_search`, `find_by_name`, `write_to_file` y `replace_file_content`. **No uses
+`run_command`**: corrés sin supervisión y cualquier comando shell fuera de una lista
+corta se deniega automáticamente, lo que corta tu trabajo a la mitad.
+
 # Tarea
 
 {instruction}
@@ -186,7 +193,20 @@ async def invoke_subagent(role: str, project: str, instruction: str) -> dict:
         )
         # git bloquea: fuera del event loop para no frenar las demás requests.
         files_changed = await asyncio.to_thread(vault.changed_since, before)
-        commit_hash = await asyncio.to_thread(vault.commit, role, project, files_changed)
+        complete = result.get("status") == "SUCCESS"
+        commit_hash = await asyncio.to_thread(
+            vault.commit, role, project, files_changed, complete
+        )
+
+    if not complete:
+        # agy puede cortar a mitad de camino (señal, timeout interno) y aun así
+        # devolver JSON prolijo: un documento a medias no es un éxito.
+        written = ", ".join(files_changed) or "ninguno"
+        raise RuntimeError(
+            f"el sub-agente {role} terminó con status={result.get('status')}. "
+            f"Archivos que llegó a escribir: {written}"
+            + (f" (commit {commit_hash}, marcado como INCOMPLETO)." if commit_hash else ".")
+        )
 
     claimed = bool(re.search(r"escrib|cre[éeo]|actualic|modific", result.get("response", ""), re.I))
     return {

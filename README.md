@@ -4,167 +4,157 @@ Equipo de agentes de software que se maneja por Telegram y usa un vault de
 Obsidian como memoria compartida.
 
 ```
-Telegram ──► n8n (Docker) ──► Gateway HTTP (host) ──► agy (orquestador)
-   ▲              │                    │                      │
-   │              │                    │              orc-delegate
-   └──────────────┘                    ▼                      ▼
-      callback              git commit + verificación   sub-agentes
-                                       │            producto / dba / nestjs
-                                       ▼                      │
-                          Vault de Obsidian ◄─────────────────┘
-                            (memoria compartida)
+Telegram ◄──── long polling ────► Gateway (host, systemd) ──► agy (orquestador)
+                                        │                          │
+                                        │                     orc-delegate
+                                        ▼                          ▼
+                          git: verificación + commit      sub-agentes agy
+                                        │               producto / dba / nestjs
+                                        ▼                          │
+                               Vault de Obsidian ◄─────────────────┘
+                                 (memoria compartida)
 ```
 
 ## Por qué está armado así
 
-- **El orquestador es `agy`, no un nodo de n8n.** `agy` trae el supervisor pattern
-  nativo y corre con tu sesión ya autenticada, así que no hace falta una API key
-  aparte para el cerebro que rutea.
-- **La memoria por chat es el `conversation_id` de `agy`.** Se guarda el mapa
-  `chat_id → conversation_id` y se reanuda con `--conversation`. Reemplaza al
-  Window Buffer Memory.
+- **Telegram por long polling, sin webhook.** El gateway sale a buscar los mensajes
+  a la Bot API. No hace falta URL pública, túnel ni certificado, y **ningún puerto
+  del sistema queda expuesto a internet**. Gateway en `127.0.0.1`.
+- **El orquestador es `agy`** (CLI de Antigravity). Trae el patrón supervisor nativo
+  y corre con la sesión ya autenticada del host. Solo modelos Gemini.
+- **La memoria por chat es el `conversation_id` de `agy`**, persistido en
+  `state/sessions.json` y reanudado con `--conversation`.
 - **Obsidian se conecta con `--add-dir`.** Los agentes corren en el host y tienen
-  filesystem real: no hace falta el plugin Local REST API ni montar volúmenes.
-- **Todo es asíncrono.** Un turno tarda entre 1 y 5 minutos; Telegram y el nodo
-  HTTP de n8n no esperan tanto. El gateway contesta `202 {job_id}` al instante y
-  devuelve el resultado por callback.
-- **No se le cree al agente: se verifica con git.** `agy` puede decir que escribió
-  un archivo sin haberlo hecho. El gateway compara el estado de git antes y después
-  y reporta `files_changed` real. Si el agente dice que escribió y git no vio nada,
-  marca `suspect_no_writes: true`.
+  filesystem real: no hace falta plugin ni volúmenes.
+- **No se le cree al agente: se verifica con git.** El gateway compara el estado de
+  git antes y después de cada sub-agente y reporta `files_changed` real.
 
 ## Puesta en marcha
 
 ### 1. Configurar
 
 ```bash
-cp .env.example .env   # ya está creado con un token random
-$EDITOR .env           # revisá VAULT_PATH y los modelos
+cp .env.example .env
+sed -i "s|^GATEWAY_TOKEN=.*|GATEWAY_TOKEN=$(openssl rand -hex 24)|" .env
+chmod 600 .env
+$EDITOR .env    # VAULT_PATH, ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
 ```
 
-`agy models` lista los modelos disponibles para `MODEL_*`.
+- `TELEGRAM_BOT_TOKEN`: lo da **@BotFather** con `/newbot`.
+- `ALLOWED_CHAT_IDS`: tu chat_id. A cualquier otro chat el bot no le contesta nada.
+- `MODEL_*`: `agy models` lista los disponibles. El gateway los valida al arrancar.
 
 ### 2. Permisos de `agy` (obligatorio)
 
-En headless, `agy` **auto-deniega** cualquier comando shell que no tenga allow-rule:
-la respuesta vuelve vacía con `status: SUCCESS` y un campo `denied_actions`. Sin esto
-el orquestador nunca puede delegar.
+En headless, `agy` **auto-deniega** cualquier comando shell sin allow-rule: la
+respuesta vuelve vacía con `status: SUCCESS` y un campo `denied_actions`.
 
-En `~/.gemini/antigravity-cli/settings.json`:
+En `~/.gemini/antigravity-cli/settings.json` (hacé backup antes, porque `agy` lo
+sobrescribe si no lo puede parsear):
 
 ```json
 {
   "permissions": {
-    "allow": ["command(orc-delegate)", "command(which)", "command(ls)"]
-  },
-  "trustedWorkspaces": ["/home/lpalmieri"]
+    "allow": [
+      "command(orc-delegate)",
+      "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
+      "command(git log)", "command(git status)", "command(git diff)"
+    ]
+  }
 }
 ```
 
-Las reglas matchean **por prefijo del comando**: `command(orc-delegate)` permite
-`orc-delegate dba "..."` pero no `which orc-delegate`. Hacé backup del archivo antes
-de editarlo: `agy` lo sobrescribe si no lo puede parsear.
+Las reglas matchean **por prefijo**, y `agy` analiza los comandos compuestos:
+`ls && touch x` se deniega porque `touch` no está permitido (verificado).
 
-### 3. Levantar el gateway
+> ⚠️ **No permitas `command(git config)`**: con `core.fsmonitor` o `core.hooksPath`
+> un agente con una instrucción inyectada puede plantar un comando que después
+> ejecuta cualquier `git status`. El gateway anula esas dos claves en sus propias
+> llamadas, pero tus otras herramientas no.
+
+### 3. Levantar el gateway como servicio
 
 ```bash
 uv sync --project gateway
-./scripts/run-gateway.sh              # en primer plano, para probar
-curl -s localhost:8787/health | jq    # "status": "ok"
-```
-
-Como servicio permanente:
-
-```bash
 cp systemd/orchestrator-gateway.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now orchestrator-gateway
-journalctl --user -u orchestrator-gateway -f
+curl -s localhost:8787/health | jq      # "status": "ok"
 ```
 
-### 4. Levantar n8n
+Para que arranque al bootear sin iniciar sesión: `loginctl enable-linger $USER`.
 
-```bash
-docker compose up -d
-```
-
-Entrá a http://localhost:5678 y creá la cuenta local.
-
-### 5. Importar el workflow
-
-1. **Workflows → Import from File** → `n8n/workflow-telegram-orchestrator.json`.
-2. Creá la credencial **Telegram account** con el token que te da @BotFather y
-   seleccionala en los tres nodos de Telegram (vienen con `REEMPLAZAR`).
-3. En el nodo **Gateway · POST /chat**, pegá tu `GATEWAY_TOKEN` en el header
-   `X-Orc-Token`.
-4. Activá el workflow. Copiá la **Production URL** del nodo Webhook y ponela en
-   `N8N_CALLBACK_URL` del `.env`, después reiniciá el gateway.
-
-> Un solo bot por token: si otro proceso ya está consumiendo ese bot, Telegram
-> corta una de las dos conexiones.
+Si `/health` dice `misconfigured`, el campo `problems` dice exactamente qué falta.
 
 ## Uso
 
 Le escribís al bot en lenguaje natural:
 
-> Tengo una idea para automatizar avisos de WhatsApp para turnos médicos al estilo Sinergia
+> Tengo una idea para automatizar avisos de WhatsApp para turnos médicos
 
-El orquestador entiende, delega al Agente Producto, y te resume qué quedó escrito
-en Obsidian más el siguiente paso sugerido. Respondés "sí, dale" y delega al DBA.
+El bot contesta "👀 Tomado", muestra "escribiendo…" mientras el equipo trabaja, y al
+terminar te resume qué quedó escrito en Obsidian y propone el siguiente paso.
+
+| Comando | Qué hace |
+|---------|----------|
+| `/reset` | Conversación nueva: el orquestador olvida el contexto |
+| `/estado` | Qué está haciendo el equipo ahora |
+| `/ayuda` | Ayuda |
+
+Si mandás un mensaje mientras otro se procesa, queda en cola ("📥 Lo anoto") y se
+atiende después: dos turnos en paralelo sobre la misma conversación se pisarían.
 
 ## Sub-agentes
 
-| Rol | Escribe en el vault | Modelo por defecto |
-|-----|---------------------|--------------------|
-| `producto` | `00 - Índice`, `01 - Requerimientos` | Gemini 3.8 Flash |
-| `dba` | `03 - Modelo de Datos` | Claude Sonnet 4.6 |
-| `nestjs` | `02 - Arquitectura`, `04 - API REST` | Claude Sonnet 4.6 |
+| Rol | Escribe en el vault | Modelo |
+|-----|---------------------|--------|
+| orquestador | — (delega) | `gemini-3.8-flash-high` |
+| `producto` | `00 - Índice`, `01 - Requerimientos` | `gemini-3.8-flash-high` |
+| `dba` | `03 - Modelo de Datos` | `gemini-3.1-pro-high` |
+| `nestjs` | `02 - Arquitectura`, `04 - API REST` | `gemini-3.1-pro-high` |
 
-Los roles se definen en `prompts/*.md`: editá esos archivos para cambiar el
-comportamiento. Para agregar un rol nuevo, creá `prompts/<rol>.md`, agregalo a
-`ROLES` y a `MODELS` en `gateway/config.py`, y mencionalo en
+Los roles se definen en `prompts/*.md`. Para agregar uno: `prompts/<rol>.md`, sumarlo
+a `ROLES` y `MODELS` en `gateway/config.py`, y mencionarlo en
 `prompts/orchestrator.md`.
 
 ## API del gateway
 
-Todo pide el header `X-Orc-Token`, menos `/health`.
+Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 
 | Método | Ruta | Para qué |
 |--------|------|----------|
-| `GET` | `/health` | Estado y problemas de configuración |
-| `POST` | `/chat` | Mensaje de Telegram → `202 {job_id}` |
+| `GET` | `/health` | Estado, problemas de configuración, trabajos en vuelo |
+| `POST` | `/chat` | Mensaje por HTTP (pruebas) → `202 {job_id}` |
 | `POST` | `/agents/{rol}` | Invocar un sub-agente directo (síncrono) |
-| `GET` | `/jobs/{id}` | Estado de un job |
+| `GET` | `/jobs/{id}` | Estado de un trabajo |
 | `POST` | `/sessions/{chat_id}/reset` | Borrar la memoria de ese chat |
 | `GET` | `/projects` | Proyectos en el vault |
 
-Probar un sub-agente sin pasar por Telegram:
-
-```bash
-TOKEN=$(grep '^GATEWAY_TOKEN=' .env | cut -d= -f2)
-curl -sS -X POST localhost:8787/agents/producto \
-  -H 'Content-Type: application/json' -H "X-Orc-Token: $TOKEN" \
-  -d '{"project":"Mi Proyecto","instruction":"Creá el 00 y el 01."}' | jq
-```
-
 ## Operación
 
-- **El vault se commitea solo.** Cada turno de sub-agente genera un commit
-  (`VAULT_AUTOCOMMIT=false` lo desactiva). Para deshacer lo último:
+- **Reiniciar es seguro.** La unit usa `KillMode=mixed`: el gateway deja de tomar
+  mensajes, espera hasta 280 s a que terminen los trabajos en curso, entrega las
+  respuestas y recién ahí sale. Verificado con SIGTERM a mitad de un turno.
+- **Mensajes que llegan con el gateway caído** se atienden al volver: Telegram los
+  guarda 24 h y el offset está persistido en `state/telegram_offset`.
+- **El vault se commitea solo.** Un sub-agente que termina mal deja un commit marcado
+  `[INCOMPLETO]` y el error llega a Telegram. Deshacer lo último:
   `git -C "$VAULT_PATH" reset --hard HEAD~1`.
-- **Un agente por proyecto a la vez.** Hay lock por proyecto; un segundo pedido
-  sobre el mismo proyecto devuelve `409` en vez de corromper los documentos.
-- **La conversación se recicla** cada `ORCHESTRATOR_MAX_TURNS` turnos, porque el
-  input crece turno a turno.
-- **Logs:** `state/jobs.jsonl` (histórico) y `journalctl --user -u orchestrator-gateway`.
+- **Un agente por proyecto a la vez** (lock por proyecto, devuelve 409).
+- **Logs:** `journalctl --user -u orchestrator-gateway -f` y `state/jobs.jsonl`.
 
-## Gotcha importante
+## Cómo falla `agy` en silencio (y cómo lo detecta el gateway)
 
-Hay dos formas en que `agy` falla en silencio, y las dos se ven igual desde afuera:
+| Síntoma | Causa | Detección |
+|---------|-------|-----------|
+| Dice "escribí X" y no escribió nada | Falta `--mode accept-edits` | `runner.py` siempre lo pasa; git verifica |
+| `response` vacío, `status: SUCCESS` | Comando shell sin allow-rule | Lee `denied_actions` y nombra la regla |
+| Se queda esperando y devuelve vacío | Sesión OAuth vencida | Marcadores de login en la salida |
+| `status: ERROR` con JSON prolijo | Corte a mitad de camino | Error explícito y commit `[INCOMPLETO]` |
+| Falla con lista de modelos | Antigravity retiró el modelo | Validación de modelos al arrancar |
 
-1. **`agy -p` sin `--mode accept-edits` no ejecuta herramientas pero responde como si
-   las hubiera ejecutado.** Por eso `runner.py` siempre lo pasa. Si los agentes "dicen
-   que escriben" y el vault no cambia, es lo primero que hay que mirar.
-2. **Un comando sin allow-rule se auto-deniega** y devuelve `response` vacío con
-   `status: SUCCESS`. El gateway lo detecta vía `denied_actions` y te dice qué regla
-   falta (ver paso 2 de la instalación).
+## Alternativa: n8n como puerta de Telegram
+
+Los workflows están en `n8n/` y el contenedor en `docker-compose.yml` (en la raíz,
+porque toma los tokens del `.env`). Requiere un túnel HTTPS público para el Telegram
+Trigger. Ver [`n8n/README.md`](n8n/README.md).

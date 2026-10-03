@@ -1,0 +1,154 @@
+{
+  "id": "OrcSalidaTgOut01",
+  "name": "Orchestrator · Salida (gateway → Telegram)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "orchestrator-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "s1000000-0000-4000-8000-000000000001",
+      "name": "Webhook · respuesta del agente",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        0
+      ],
+      "webhookId": "orchestrator-reply"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "s1000000-0000-4000-8000-000000000002-c1",
+              "leftValue": "={{ !!$env.ORC_GATEWAY_TOKEN && $json.headers['x-orc-token'] === $env.ORC_GATEWAY_TOKEN }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "s1000000-0000-4000-8000-000000000002",
+      "name": "¿Viene del gateway?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "={{ $json.body.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "s1000000-0000-4000-8000-000000000003",
+      "name": "Telegram · enviar resultado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -20,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\": true}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "s1000000-0000-4000-8000-000000000004",
+      "name": "Responder 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"error\": \"token inválido\"}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "s1000000-0000-4000-8000-000000000005",
+      "name": "Responder 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -20,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook · respuesta del agente": {
+      "main": [
+        [
+          {
+            "node": "¿Viene del gateway?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Viene del gateway?": {
+      "main": [
+        [
+          {
+            "node": "Telegram · enviar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram · enviar resultado": {
+      "main": [
+        [
+          {
+            "node": "Responder 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

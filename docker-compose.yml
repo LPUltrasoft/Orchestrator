@@ -3,21 +3,32 @@ services:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
-    ports:
-      - "5678:5678"
+    # Red del host: n8n y el gateway se hablan por loopback.
+    # Con una red bridge, ufw descarta el tráfico contenedor -> host (el puerto 8787
+    # del gateway), y los puertos publicados por Docker se saltean ufw y quedan
+    # expuestos a la red local. Con host + listen en 127.0.0.1 no pasa ninguna de
+    # las dos cosas.
+    network_mode: host
     environment:
+      - N8N_LISTEN_ADDRESS=127.0.0.1
+      - N8N_PORT=5678
+      - N8N_HOST=localhost
+      - WEBHOOK_URL=http://localhost:5678/
       - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
       - TZ=America/Argentina/Buenos_Aires
       # Acceso por localhost sin HTTPS: sin esto no se puede iniciar sesión.
       - N8N_SECURE_COOKIE=false
-      - N8N_HOST=localhost
-      - N8N_PORT=5678
-      - WEBHOOK_URL=http://localhost:5678/
       - N8N_RUNNERS_ENABLED=true
       - N8N_DIAGNOSTICS_ENABLED=false
+      # Los workflows leen secretos con $env: así no quedan en el JSON del repo.
+      # Compose los toma del .env de esta carpeta.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - ORC_GATEWAY_TOKEN=${GATEWAY_TOKEN}
+      - ORC_ALLOWED_CHAT_IDS=${ALLOWED_CHAT_IDS}
     volumes:
-      - ./n8n_data:/home/node/.n8n
-    extra_hosts:
-      # En Linux, host.docker.internal no existe por defecto: esto es lo que
-      # le permite al contenedor llegar al gateway que corre en el host.
-      - "host.docker.internal:host-gateway"
+      # Volumen con nombre y no bind mount: Docker crearía ./n8n_data como root y
+      # n8n (uid 1000) muere en loop con EACCES al escribir su config.
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  n8n_data:
