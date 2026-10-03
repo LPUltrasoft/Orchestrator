@@ -47,7 +47,21 @@ if [[ $# -lt 3 ]]; then
   exit 64
 fi
 
+# Solo el orquestador delega. Un sub-agente que delega dispara otro sub-agente:
+# el gateway marca quién invoca cada agy en ORC_CALLER.
+if [[ -n "${ORC_CALLER:-}" && "$ORC_CALLER" != "orchestrator" ]]; then
+  echo "{\"status\":\"ERROR\",\"error\":\"orc-delegate es solo para el orquestador; vos sos el agente ${ORC_CALLER}. Hacé tu tarea con tus herramientas de archivos.\"}" >&2
+  exit 77
+fi
+
 ROLE="$1"; PROJECT="$2"; shift 2; INSTRUCTION="$*"
+case "$ROLE" in
+  producto|dba|nestjs) ;;
+  *)
+    echo "{\"status\":\"ERROR\",\"error\":\"rol desconocido: ${ROLE}. Válidos: producto, dba, nestjs. orc-delegate solo delega; no ejecuta comandos.\"}" >&2
+    exit 64
+    ;;
+esac
 GATEWAY="${ORC_GATEWAY_URL:-http://127.0.0.1:8787}"
 TOKEN="${ORC_TOKEN:-}"
 

@@ -4,12 +4,15 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+import logging
 import os
 import re
 from contextlib import contextmanager
 from pathlib import Path
 
 from . import config, vault
+
+log = logging.getLogger("orchestrator.runner")
 
 # Claves que devuelve agy --output-format json
 JSON_KEYS = ("conversation_id", "status", "response")
@@ -33,6 +36,13 @@ def project_lock(name: str):
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
 
+
+DENIED_RETRY_PROMPT = (
+    "El comando shell que intentaste fue denegado: en este entorno corrés sin "
+    "supervisión y casi ningún comando está permitido. No lo vuelvas a intentar ni "
+    "pruebes variantes. Usá tus herramientas nativas (list_dir, view_file, "
+    "grep_search, find_by_name) y seguí con la tarea original."
+)
 
 AUTH_MARKERS = (
     "Authentication required",
@@ -72,6 +82,8 @@ async def run_agy(
     conversation_id: str | None = None,
     extra_dirs: list[Path] | None = None,
     timeout: int | None = None,
+    denied_retries: int = 2,
+    caller: str = "orchestrator",
 ) -> dict:
     """Corre agy y devuelve su JSON. No verifica efectos: eso lo hace el caller."""
     argv = [
@@ -95,6 +107,9 @@ async def run_agy(
     env["ORC_VAULT_PATH"] = str(config.VAULT_PATH)
     env["ORC_GATEWAY_URL"] = f"http://127.0.0.1:{config.PORT}"
     env["ORC_TOKEN"] = config.TOKEN
+    # orc-delegate se niega si no lo llama el orquestador: un sub-agente que
+    # delega dispara otro sub-agente, y así sin fin.
+    env["ORC_CALLER"] = caller
 
     process = await asyncio.create_subprocess_exec(
         *argv,
@@ -126,6 +141,21 @@ async def run_agy(
     denied = data.get("denied_actions") or []
     if denied and not (data.get("response") or "").strip():
         names = ", ".join(d.get("display_name") or d.get("action", "?") for d in denied)
+        # Cada pregunta nueva lleva al modelo a otro comando shell (find, wc, stat...):
+        # agrandar la allowlist cada vez no termina nunca, y algunos (find -delete,
+        # find -exec) no son seguros. Mejor reanudar la conversación y reencauzarlo.
+        if denied_retries > 0 and data.get("conversation_id"):
+            log.warning("agy denegó %s; reanudo la conversación con una indicación", names)
+            return await run_agy(
+                prompt=DENIED_RETRY_PROMPT,
+                model=model,
+                cwd=cwd,
+                conversation_id=data["conversation_id"],
+                extra_dirs=extra_dirs,
+                timeout=timeout,
+                denied_retries=denied_retries - 1,
+                caller=caller,
+            )
         raise RuntimeError(
             f"agy denegó herramientas por falta de permisos en headless: {names}. "
             f"Agregá la allow-rule correspondiente en "
@@ -190,6 +220,7 @@ async def invoke_subagent(role: str, project: str, instruction: str) -> dict:
             prompt=build_subagent_prompt(role, project, instruction, project_path),
             model=config.MODELS[role],
             cwd=project_path,
+            caller=role,
         )
         # git bloquea: fuera del event loop para no frenar las demás requests.
         files_changed = await asyncio.to_thread(vault.changed_since, before)

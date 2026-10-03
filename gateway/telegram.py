@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
+from urllib.parse import unquote
 
 import httpx
 
@@ -26,6 +28,28 @@ MessageHandler = Callable[[str, str | None, str | None], Awaitable[None]]
 
 class TelegramError(RuntimeError):
     pass
+
+
+_FILE_LINK = re.compile(r"\[([^\]]+)\]\(file://[^)]*\)")
+_WEB_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_BARE_FILE_URL = re.compile(r"file://\S+")
+_BOLD = re.compile(r"\*\*(.+?)\*\*")  # `__` no: rompería __init__.py
+_HEADING = re.compile(r"^#{1,6}\s+", re.M)
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+
+
+def to_plain_text(text: str) -> str:
+    """Saca el Markdown que los modelos usan aunque el prompt se lo prohíba.
+
+    Telegram sin parse_mode muestra los `**` crudos, y un link file:// a una ruta
+    del vault no abre en el celular: se deja solo el nombre.
+    """
+    text = _FILE_LINK.sub(r"\1", text)
+    text = _WEB_LINK.sub(r"\1 (\2)", text)
+    text = _BARE_FILE_URL.sub(lambda m: unquote(m.group().rstrip("/").rsplit("/", 1)[-1]), text)
+    text = _BOLD.sub(r"\1", text)
+    text = _HEADING.sub("", text)
+    return _INLINE_CODE.sub(r"\1", text)
 
 
 def split_message(text: str) -> list[str]:
@@ -74,7 +98,7 @@ class TelegramBot:
     async def send(self, chat_id: str, text: str) -> None:
         """Texto plano: el Markdown de Telegram rechaza el mensaje entero si un
         carácter queda desbalanceado, y una respuesta perdida es peor que fea."""
-        for chunk in split_message(text):
+        for chunk in split_message(to_plain_text(text)):
             await self.call("sendMessage", chat_id=chat_id, text=chunk)
 
     async def typing(self, chat_id: str) -> None:

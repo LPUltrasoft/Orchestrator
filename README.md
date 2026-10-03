@@ -67,6 +67,11 @@ sobrescribe si no lo puede parsear):
 Las reglas matchean **por prefijo**, y `agy` analiza los comandos compuestos:
 `ls && touch x` se deniega porque `touch` no está permitido (verificado).
 
+Si un agente intenta un comando que no está en la lista, el gateway **no corta el
+turno**: reanuda la conversación con una indicación para que use sus herramientas
+nativas, hasta dos veces. Por eso la lista puede quedar corta. **No agregues `find`**:
+puede borrar (`-delete`) o ejecutar (`-exec`) dentro de un solo comando.
+
 > ⚠️ **No permitas `command(git config)`**: con `core.fsmonitor` o `core.hooksPath`
 > un agente con una instrucción inyectada puede plantar un comando que después
 > ejecuta cualquier `git status`. El gateway anula esas dos claves en sus propias
@@ -113,6 +118,9 @@ atiende después: dos turnos en paralelo sobre la misma conversación se pisarí
 | `dba` | `03 - Modelo de Datos` | `gemini-3.1-pro-high` |
 | `nestjs` | `02 - Arquitectura`, `04 - API REST` | `gemini-3.1-pro-high` |
 
+**Solo el orquestador puede delegar.** El gateway marca quién invoca cada `agy` en
+`ORC_CALLER`, y `orc-delegate` se niega si lo llama un sub-agente.
+
 Los roles se definen en `prompts/*.md`. Para agregar uno: `prompts/<rol>.md`, sumarlo
 a `ROLES` y `MODELS` en `gateway/config.py`, y mencionarlo en
 `prompts/orchestrator.md`.
@@ -152,6 +160,20 @@ Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 | Se queda esperando y devuelve vacío | Sesión OAuth vencida | Marcadores de login en la salida |
 | `status: ERROR` con JSON prolijo | Corte a mitad de camino | Error explícito y commit `[INCOMPLETO]` |
 | Falla con lista de modelos | Antigravity retiró el modelo | Validación de modelos al arrancar |
+
+Y una más que no es falla pero se le parece: **Gemini ignora las reglas de formato del
+prompt** y responde con `**negritas**` y links `file://`. `telegram.to_plain_text()`
+limpia el Markdown antes de enviar.
+
+## Probar sin tocar nada real
+
+Un script que llame a `gateway.runner` hereda el entorno real: si el agente decide
+delegar, `orc-delegate` le pega al gateway y al vault de verdad (pasó). Aislalo siempre:
+
+```bash
+GATEWAY_PORT=9 GATEWAY_TOKEN=invalido ORC_STATE_DIR=/tmp/orc-test \
+  uv run --project gateway python mi_prueba.py
+```
 
 ## Alternativa: n8n como puerta de Telegram
 
