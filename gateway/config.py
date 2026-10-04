@@ -90,6 +90,12 @@ ENGINES = {r: os.environ.get(f"ENGINE_{r.upper()}", e) for r, (e, _, _) in _DEFA
 MODELS = {r: os.environ.get(f"MODEL_{r.upper()}", m) for r, (_, m, _) in _DEFAULT_AGENTS.items()}
 EFFORTS = {r: os.environ.get(f"EFFORT_{r.upper()}", f) or None for r, (_, _, f) in _DEFAULT_AGENTS.items()}
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
+# Drive de los backups: se avisa por Telegram cuando la cuenta llega a DRIVE_ALERT_GB
+# (los 15 GB gratis se comparten con Gmail y Fotos). Se revisa cada DRIVE_CHECK_INTERVAL s.
+RCLONE_BIN = os.environ.get("RCLONE_BIN", shutil.which("rclone") or str(Path.home() / ".local/bin/rclone"))
+DRIVE_REMOTE = os.environ.get("DRIVE_REMOTE", "drive-backups")
+DRIVE_ALERT_GB = float(os.environ.get("DRIVE_ALERT_GB", "14"))
+DRIVE_CHECK_INTERVAL = int(os.environ.get("DRIVE_CHECK_INTERVAL", "21600"))
 # Donde agy guarda lo que genera cada conversación (por ejemplo, las imágenes).
 AGY_BRAIN_DIR = Path(os.environ.get("AGY_BRAIN_DIR", Path.home() / ".gemini/antigravity-cli/brain"))
 

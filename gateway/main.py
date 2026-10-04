@@ -13,13 +13,13 @@ import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, design, jobs, palette, process, progress, quota, runner, sessions, stitch, telegram, vault
+from . import config, design, drive, jobs, palette, process, progress, quota, runner, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -60,6 +60,8 @@ _progress: dict[str, progress.Progress] = {}
 # Pedidos pausados por cuota, persistidos: sobreviven a un reinicio mientras esperan.
 _PAUSED_FILE = config.STATE_DIR / "paused.json"
 _resumers: set[asyncio.Task] = set()
+# Espacio del Drive de los backups (se ve en /health y en /estado).
+_drive = {"uso": None, "revisado": None, "avisado": None, "error": None}
 # Estado del push automático del vault a GitHub (se ve en /health y en /estado).
 _push = {"pending": None, "last_push": None, "failing_since": None, "error": None, "alerted": False}
 # Delegaciones rechazadas por cuota a mitad de un turno, por job_id: al terminar ese
@@ -200,6 +202,38 @@ async def _push_vault() -> None:
     if _push["alerted"]:
         await _alert("✅ Ya pude subir el vault a GitHub: no queda nada pendiente.")
     _push.update(pending=0, last_push=now, failing_since=None, error=None, alerted=False)
+
+
+async def _check_drive() -> None:
+    """Avisa si el Drive de los backups pasa el umbral: al cruzarlo, y una vez por semana
+    mientras siga arriba. Cuando baja, avisa que se liberó."""
+    try:
+        u = await drive.usage()
+    except (RuntimeError, OSError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+        _drive["error"] = str(exc)[:300]
+        log.warning("no pude revisar el espacio de Drive: %s", exc)
+        return
+    now = datetime.now(timezone.utc)
+    _drive.update(uso=u, revisado=now, error=None)
+    limit = config.DRIVE_ALERT_GB * drive.GIB
+    if u["usado"] >= limit:
+        last = _drive["avisado"]
+        if not last or (now - last).total_seconds() >= 7 * 86400:
+            _drive["avisado"] = now
+            await _alert(drive.alert_text(u))
+    elif _drive["avisado"] and u["usado"] < limit - 0.5 * drive.GIB:
+        _drive["avisado"] = None
+        await _alert(f"✅ El Drive de los backups bajó a {drive.gb(u['usado'])}: hay espacio de nuevo.")
+
+
+async def _drive_watcher() -> None:
+    await asyncio.sleep(60)  # que el arranque no espere a Google
+    while True:
+        try:
+            await _check_drive()
+        except Exception:  # noqa: BLE001 — que un error raro no apague el control
+            log.exception("error inesperado revisando el espacio de Drive")
+        await asyncio.sleep(config.DRIVE_CHECK_INTERVAL)
 
 
 async def _vault_pusher() -> None:
@@ -691,6 +725,8 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
             await bot.send(chat_id, f"En curso ({len(running)}):\n{lines}")
         if not running and not paused:
             await bot.send(chat_id, "No hay nada en curso.")
+        if _drive["uso"] and _drive["uso"]["usado"] >= config.DRIVE_ALERT_GB * drive.GIB:
+            await bot.send(chat_id, f"💾 El Drive de los backups está en {drive.gb(_drive['uso']['usado'])} de {drive.gb(_drive['uso']['total'])}.")
         if _push["failing_since"]:
             await bot.send(chat_id, (
                 f"⚠️ El vault no se sube a GitHub desde las "
@@ -752,6 +788,10 @@ async def lifespan(_: FastAPI):
     pusher = None
     if config.VAULT_AUTOCOMMIT and config.VAULT_AUTOPUSH:
         pusher = asyncio.create_task(_vault_pusher())
+    # Solo si rclone y el remoto de backups están configurados en esta PC.
+    drive_watcher = None
+    if Path(config.RCLONE_BIN).exists() and config.DRIVE_REMOTE:
+        drive_watcher = asyncio.create_task(_drive_watcher())
 
     yield
 
@@ -764,6 +804,8 @@ async def lifespan(_: FastAPI):
     if _inflight:
         log.info("esperando %d trabajo(s) en curso antes de apagar", len(_inflight))
         await asyncio.wait(_inflight, timeout=SHUTDOWN_GRACE)
+    if drive_watcher:
+        drive_watcher.cancel()
     if pusher:
         pusher.cancel()
         # Lo último que commitearon los trabajos que acaban de terminar. Poco margen:
@@ -802,6 +844,7 @@ async def health() -> dict:
         ],
         "vault": str(config.VAULT_PATH),
         "vault_push": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _push.items()},
+        "drive": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _drive.items()},
         "projects": vault.list_projects(),
         "models": config.MODELS,
     }
