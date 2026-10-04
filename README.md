@@ -8,8 +8,8 @@ Telegram ◄──── long polling ────► Gateway (host, systemd) �
                                         │                          │
                                         │                     orc-delegate
                                         ▼                          ▼
-                          git: verificación + commit      sub-agentes agy
-                                        │               producto / dba / nestjs
+                          git: verificación + commit        sub-agentes
+                                        │        agy (Gemini) · claude (Claude)
                                         ▼                          │
                                Vault de Obsidian ◄─────────────────┘
                                  (memoria compartida)
@@ -21,7 +21,10 @@ Telegram ◄──── long polling ────► Gateway (host, systemd) �
   a la Bot API. No hace falta URL pública, túnel ni certificado, y **ningún puerto
   del sistema queda expuesto a internet**. Gateway en `127.0.0.1`.
 - **El orquestador es `agy`** (CLI de Antigravity). Trae el patrón supervisor nativo
-  y corre con la sesión ya autenticada del host. Solo modelos Gemini.
+  y corre con la sesión ya autenticada del host. Con `agy` corren solo modelos Gemini.
+- **Cada rol tiene su motor.** Los roles de Gemini corren con `agy`; los de Claude, con
+  el CLI de Claude Code (`claude`), nunca con Claude dentro de `agy`. Ver
+  [Motores y modelos](#motores-y-modelos).
 - **La memoria por chat es el `conversation_id` de `agy`**, persistido en
   `state/sessions.json` y reanudado con `--conversation`.
 - **Obsidian se conecta con `--add-dir`.** Los agentes corren en el host y tienen
@@ -42,7 +45,10 @@ $EDITOR .env    # VAULT_PATH, ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
 
 - `TELEGRAM_BOT_TOKEN`: lo da **@BotFather** con `/newbot`.
 - `ALLOWED_CHAT_IDS`: tu chat_id. A cualquier otro chat el bot no le contesta nada.
-- `MODEL_*`: `agy models` lista los disponibles. El gateway los valida al arrancar.
+- Motor, modelo y nivel de cada rol: vienen en `gateway/config.py` y se cambian con
+  `ENGINE_<ROL>`, `MODEL_<ROL>` y `EFFORT_<ROL>` en el `.env` (por ejemplo,
+  `MODEL_DBA=claude-sonnet-5-5`). `agy models` lista los de Gemini; el gateway los valida
+  al arrancar.
 
 ### 2. Permisos de `agy` (obligatorio)
 
@@ -162,21 +168,22 @@ vault, en `Estado del Proyecto.md` (legible, con los datos en un bloque JSON al 
 y cada cambio se commitea. Los proyectos anteriores al proceso no tienen ese archivo y
 trabajan sin fases.
 
-| Rol | Escribe | Modelo |
-|-----|---------|--------|
-| orquestador | — (coordina) | `gemini-3.8-flash-high` |
-| `producto` | 00 visión, 01 requerimientos con MVP y backlog | `gemini-3.8-flash-high` |
-| `qa` | 11 plan de pruebas | `gemini-3.8-flash-high` |
-| `lider_tecnico` | ADRs, 02 arquitectura, 04 API (OpenAPI) | `gemini-3.1-pro-high` |
-| `dba` | 03 modelo y funciones almacenadas | `gemini-3.1-pro-high` |
-| `legal` | 09 propuesta y contrato (borrador) | `gemini-3.1-pro-high` |
-| `team_leader` | 08 estimaciones, 10 plan de trabajo | `gemini-3.8-flash-high` |
-| `ux` | 05, sección UX | `gemini-3.8-flash-high` |
-| `ui` | 05, sección UI | `gemini-3.8-flash-high` |
-| `seguridad` | 12 revisión de seguridad | `gemini-3.1-pro-high` |
-| `nestjs` | Desarrollo backend (etapa 3) | `gemini-3.1-pro-high` |
+| Rol | Escribe | Motor | Modelo | Nivel |
+|-----|---------|-------|--------|-------|
+| orquestador | — (coordina) | agy | `gemini-3.8-flash-high` | — |
+| `producto` | 00 visión, 01 requerimientos con MVP y backlog | agy | `gemini-3.1-pro-high` | — |
+| `legal` | 09 propuesta y contrato (borrador) | agy | `gemini-3.1-pro-high` | — |
+| `ux` | 05, sección UX | agy | `gemini-3.1-pro-high` | — |
+| `ui` | 05 sección UI, `Diseño/DESIGN.md` y `Pantallas.md` | agy | `gemini-3.1-pro-high` | — |
+| `revisor_ux_ui` | 13 revisión de UX, UI y capturas | claude | `claude-sonnet-5-5` | medium |
+| `qa` | 11 plan de pruebas | claude | `claude-opus-5-5` | medium |
+| `nestjs` | Desarrollo backend (etapa 3) | claude | `claude-opus-5-5` | medium |
+| `lider_tecnico` | ADRs, 02 arquitectura, 04 API (OpenAPI) | claude | `claude-opus-5-5` | high |
+| `dba` | 03 modelo y funciones almacenadas | claude | `claude-opus-5-5` | high |
+| `team_leader` | 08 estimaciones, 10 plan de trabajo | claude | `claude-opus-5-5` | high |
+| `seguridad` | 12 revisión de seguridad | claude | `claude-opus-5-5` | high |
 
-Cada modelo se cambia con `MODEL_<ROL>` en el `.env`.
+Se cambian con `ENGINE_<ROL>`, `MODEL_<ROL>` y `EFFORT_<ROL>` en el `.env`.
 
 ### Comandos del orquestador
 
@@ -209,7 +216,7 @@ En la fase 5, el rol `ui` escribe `Diseño/DESIGN.md` (sistema de diseño) y
 `Diseño/Pantallas.md` (cada pantalla con su prompt, en un bloque JSON). `orc-diseno`
 hace el resto, en el gateway: crea el proyecto en Stitch, carga el sistema de diseño
 (`upload_design_md` + `create_design_system_from_design_md`), genera cada pantalla para
-celular, baja la captura y el HTML a `Diseño/Pantallas/`, arma el índice
+celular y escritorio, baja la captura y el HTML a `Diseño/Pantallas/`, arma el índice
 `Pantallas generadas.md` y te manda las capturas por Telegram en un álbum. Si una
 pantalla falla, sigue con las demás. `orc-diseno <proyecto> editar <id> "<cambio>"`
 corrige una pantalla con la edición nativa de Stitch.
@@ -228,8 +235,32 @@ cierra con un `Resumen.md` y los ADRs, siempre "Propuesto". Al terminar, el gate
 despierta al orquestador para que pida la aprobación de cada uno. Se pausa por cuota
 como cualquier otro trabajo y retoma desde el paso donde quedó.
 
-Para agregar un rol: `prompts/<rol>.md`, sumarlo a `_DEFAULT_MODELS` en
-`gateway/config.py`, a las fases de `gateway/process.py` y al prompt del orquestador.
+Para agregar un rol: `prompts/<rol>.md`, sumarlo a `_DEFAULT_AGENTS` en
+`gateway/config.py`, a las fases de `gateway/process.py`, a `gateway/progress.py` y al
+prompt del orquestador.
+
+### Motores y modelos
+
+`runner.invoke_subagent` elige el motor del rol. Los dos dejan el mismo resultado
+(respuesta, `session_id`, tokens, acciones denegadas) y pasan por la misma verificación
+con git.
+
+**`claude` corre aislado.** Sin estos flags, el agente hereda los permisos, hooks,
+plugins y MCP de la sesión personal del usuario (verificado: corrió un `ls` aunque Bash
+no estaba permitido):
+
+```
+claude -p --output-format stream-json --verbose --model <modelo> --effort <nivel>
+  --safe-mode --setting-sources project --strict-mcp-config
+  --permission-mode dontAsk --tools Read,Write,Edit,Glob,Grep
+  --add-dir <vault> --allowedTools "Read(/<vault>/**)" "Edit(/<proyecto>/**)"
+```
+
+- Sin Bash: un rol de Claude no ejecuta comandos ni puede delegar.
+- Lee todo el vault y escribe **solo en la carpeta del proyecto** (verificado: leer fuera
+  del vault y escribir fuera del proyecto se deniega).
+- El prompt va por stdin y la memoria del rol se retoma con `--resume <session_id>`.
+- `--bare` no sirve: pide API key y la suscripción entra por OAuth.
 
 ## API del gateway
 
@@ -250,11 +281,15 @@ Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 
 ## Control de cuota
 
-Antes de cada turno del orquestador y de cada sub-agente, el gateway consulta
-`agy -p "/quota"`, que informa por familia de modelos cuánto queda de la ventana de 5
-horas y de la semanal, y cuándo se renueva cada una. Consultarla no consume cuota.
+Antes de cada turno del orquestador y de cada sub-agente, el gateway consulta la cuota
+del motor de ese rol: `agy -p "/quota"` para Gemini y `claude -p "/usage"` para Claude.
+Los dos informan cuánto queda de la ventana de 5 horas y de la semanal, y cuándo se
+renueva cada una. Consultarlas no consume cuota.
 
-Si a alguna le queda `QUOTA_MIN_REMAINING`% o menos (5% por defecto, o sea 95% usado):
+Cada motor tiene su umbral: Gemini se pausa con `QUOTA_MIN_REMAINING`% o menos (5%, o sea
+95% usado) y Claude con `QUOTA_MIN_REMAINING_CLAUDE`% (10%, o sea 90% usado), porque la
+suscripción de Claude es la misma que usa el usuario. Una ventana propia de un modelo
+("semanal de Opus") frena solo a los roles de ese modelo. Si se agota una ventana:
 
 - **Al empezar un turno:** el pedido se guarda y llega
   "⏸️ Pausé el trabajo: se usó el 97% de la cuota de 5 horas de Gemini. Se renueva hoy a
@@ -270,8 +305,8 @@ Si a alguna le queda `QUOTA_MIN_REMAINING`% o menos (5% por defecto, o sea 95% u
 `/estado` en Telegram muestra lo que está en pausa y cuándo se retoma; `/health` muestra
 la cuota de cada ventana.
 
-Para probar sin agotar la cuota de verdad: `ORC_QUOTA_FILE=/ruta/quota.txt` hace que el
-gateway lea la salida de `/quota` de ese archivo.
+Para probar sin agotar la cuota de verdad: `ORC_QUOTA_FILE` y `ORC_CLAUDE_USAGE_FILE`
+hacen que el gateway lea la salida de `/quota` y de `/usage` de esos archivos.
 
 ## Operación
 

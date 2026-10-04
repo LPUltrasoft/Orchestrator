@@ -19,6 +19,7 @@ ROLES
   team_leader     Estimaciones (08) y plan de trabajo (10).
   ux              Flujos y wireframes, mobile first (05).
   ui              Sistema de diseño y pantallas (05).
+  revisor_ux_ui   Revisa UX, UI y las capturas de Stitch (13).
   seguridad       Revisión de seguridad (12).
   nestjs          Desarrollo backend (etapa 3, todavía no disponible).
 

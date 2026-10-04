@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=%h/Documentos/Orchestrator
 # Rutas absolutas: al bootear no hay shell de login que arme el PATH.
 ExecStart=%h/.local/bin/uv run --project gateway python -m gateway.main
-# agy, uv y orc-delegate (que usa curl y python3) tienen que estar en el PATH.
+# agy, claude, uv y orc-delegate (que usa curl y python3) tienen que estar en el PATH.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=5

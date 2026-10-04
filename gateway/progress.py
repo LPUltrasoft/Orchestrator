@@ -30,6 +30,7 @@ AGENTS = {
     "team_leader": "📌 Team leader",
     "ux": "🧩 UX",
     "ui": "🎨 UI",
+    "revisor_ux_ui": "👁️ Revisor UX/UI",
     "seguridad": "🛡️ Seguridad",
     "nestjs": "🧱 NestJS",
     "stitch": "🖌️ Stitch",

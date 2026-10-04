@@ -1,5 +1,6 @@
 """Configuración del gateway, leída del entorno (.env)."""
 import os
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +40,9 @@ TELEGRAM_POLL_TIMEOUT = int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "50"))
 # Cuota de agy: con este porcentaje restante o menos (95% usado), el trabajo se pausa
 # hasta que la ventana se renueva, y se retoma solo.
 QUOTA_MIN_REMAINING = int(os.environ.get("QUOTA_MIN_REMAINING", "5"))
+# Claude comparte la suscripción con el uso propio del usuario: sus roles se pausan antes,
+# al 90% usado, para dejarle margen (decisión del usuario).
+QUOTA_MIN_REMAINING_CLAUDE = int(os.environ.get("QUOTA_MIN_REMAINING_CLAUDE", "10"))
 # Margen después de la hora de renovación antes de retomar.
 QUOTA_RESUME_BUFFER = int(os.environ.get("QUOTA_RESUME_BUFFER", "60"))
 
@@ -56,25 +60,28 @@ ALLOWED_CHAT_IDS = {
     c.strip() for c in os.environ.get("ALLOWED_CHAT_IDS", "").split(",") if c.strip()
 }
 
-# Modelo por rol (solo Gemini dentro de agy, por decisión del usuario). Cada uno se
-# puede cambiar con MODEL_<ROL> en el .env: MODEL_LIDER_TECNICO=...
-_DEFAULT_MODELS = {
-    "orchestrator": "gemini-3.8-flash-high",
-    "producto": "gemini-3.8-flash-high",
-    "qa": "gemini-3.8-flash-high",
-    "lider_tecnico": "gemini-3.1-pro-high",
-    "dba": "gemini-3.1-pro-high",
-    "legal": "gemini-3.1-pro-high",
-    "team_leader": "gemini-3.8-flash-high",
-    "ux": "gemini-3.8-flash-high",
-    "ui": "gemini-3.8-flash-high",
-    "seguridad": "gemini-3.1-pro-high",
-    "nestjs": "gemini-3.1-pro-high",
+# Motor, modelo y esfuerzo de cada rol (definidos por el usuario el 4/10/2026). Claude se
+# usa solo con su propio CLI (`claude`), nunca dentro de agy. Cada valor se puede cambiar
+# en el .env con ENGINE_<ROL>, MODEL_<ROL> y EFFORT_<ROL>.
+_DEFAULT_AGENTS = {
+    #  rol               motor     modelo                    esfuerzo
+    "orchestrator":   ("agy",    "gemini-3.8-flash-high", None),
+    "producto":       ("agy",    "gemini-3.1-pro-high",   None),
+    "legal":          ("agy",    "gemini-3.1-pro-high",   None),
+    "ux":             ("agy",    "gemini-3.1-pro-high",   None),
+    "ui":             ("agy",    "gemini-3.1-pro-high",   None),
+    "revisor_ux_ui":  ("claude", "claude-sonnet-5-5",     "medium"),
+    "qa":             ("claude", "claude-opus-5-5",       "medium"),
+    "lider_tecnico":  ("claude", "claude-opus-5-5",       "high"),
+    "dba":            ("claude", "claude-opus-5-5",       "high"),
+    "team_leader":    ("claude", "claude-opus-5-5",       "high"),
+    "seguridad":      ("claude", "claude-opus-5-5",       "high"),
+    "nestjs":         ("claude", "claude-opus-5-5",       "medium"),
 }
-MODELS = {
-    role: os.environ.get(f"MODEL_{role.upper()}", default)
-    for role, default in _DEFAULT_MODELS.items()
-}
+ENGINES = {r: os.environ.get(f"ENGINE_{r.upper()}", e) for r, (e, _, _) in _DEFAULT_AGENTS.items()}
+MODELS = {r: os.environ.get(f"MODEL_{r.upper()}", m) for r, (_, m, _) in _DEFAULT_AGENTS.items()}
+EFFORTS = {r: os.environ.get(f"EFFORT_{r.upper()}", f) or None for r, (_, _, f) in _DEFAULT_AGENTS.items()}
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
 
 ROLES = tuple(role for role in MODELS if role != "orchestrator")
 
@@ -121,9 +128,14 @@ def validate() -> list[str]:
         problems.append(
             "sin canal de Telegram: definí TELEGRAM_BOT_TOKEN (token de @BotFather)"
         )
+    for role, engine in ENGINES.items():
+        if engine not in ("agy", "claude"):
+            problems.append(f"motor desconocido para '{role}': {engine} (agy o claude)")
+    if any(e == "claude" for e in ENGINES.values()) and not shutil.which(CLAUDE_BIN):
+        problems.append(f"hay roles con Claude pero no encuentro el CLI: {CLAUDE_BIN}")
     if KNOWN_MODELS:
         for role, model in MODELS.items():
-            if model not in KNOWN_MODELS:
+            if ENGINES[role] == "agy" and model not in KNOWN_MODELS:
                 problems.append(
                     f"el modelo de '{role}' ({model}) no existe en agy. Ver `agy models`."
                 )

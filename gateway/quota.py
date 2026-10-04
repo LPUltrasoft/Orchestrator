@@ -10,11 +10,14 @@ Consultarla no consume cuota (verificado: tres consultas seguidas dieron 98, 99 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from . import config
 
@@ -22,8 +25,18 @@ log = logging.getLogger("orchestrator.quota")
 
 # Una consulta por minuto alcanza: la cuota se mueve con los turnos, que duran minutos.
 CACHE_SECONDS = 60
-# Para pruebas: leer la salida de /quota de un archivo en lugar de llamar a agy.
+# Para pruebas: leer la salida de /quota (agy) o /usage (claude) de un archivo.
 _FAKE_FILE = os.environ.get("ORC_QUOTA_FILE")
+_FAKE_CLAUDE_FILE = os.environ.get("ORC_CLAUDE_USAGE_FILE")
+CLAUDE_FAMILY = "Claude Code"
+_MONTHS = {m: i for i, m in enumerate(
+    ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
+# "Current session: 46% used · resets Oct 4, 6:10pm (America/Argentina/Buenos_Aires)"
+# "Current week (all models): 22% used · resets Oct 8, 10pm (America/Argentina/Buenos_Aires)"
+_CLAUDE_LINE = re.compile(
+    r"Current (session|week)(?: \(([^)]*)\))?:\s*(\d+)% used"
+    r"(?:\s*·\s*resets\s+([A-Z][a-z]{2}) (\d{1,2}),\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([^)]+)\))?"
+)
 _WEEKDAYS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
 
@@ -36,10 +49,12 @@ class Window:
 
     @property
     def label(self) -> str:
-        if "five hour" in self.name.lower():
+        name = self.name.lower()
+        if "five hour" in name:
             return "de 5 horas"
-        if "weekly" in self.name.lower():
-            return "semanal"
+        if "weekly" in name:
+            scope = re.search(r"\(([^)]*)\)", self.name)
+            return f"semanal de {scope.group(1)}" if scope and scope.group(1) != "all models" else "semanal"
         return self.name
 
     @property
@@ -48,6 +63,7 @@ class Window:
 
 
 _cache: tuple[float, list[Window]] | None = None
+_claude_cache: tuple[float, list[Window]] | None = None
 
 
 def family_for(model: str) -> str:
@@ -100,13 +116,85 @@ async def read(force: bool = False) -> list[Window]:
     return windows
 
 
-async def exhausted(models: list[str] | set[str], force: bool = False) -> list[Window]:
-    """Ventanas agotadas (al umbral o menos) de las familias que usan esos modelos."""
-    families = {family_for(m) for m in models}
-    return [
-        w for w in await read(force)
-        if w.family in families and w.remaining <= config.QUOTA_MIN_REMAINING
-    ]
+def parse_claude(text: str, now: datetime | None = None) -> list[Window]:
+    """Las ventanas de `claude -p "/usage"`: la sesión (5 horas) y la semana."""
+    now = now or datetime.now().astimezone()
+    windows = []
+    for kind, scope, used, month, day, hour, minute, ampm, tz in _CLAUDE_LINE.findall(text):
+        name = "Five Hour Limit Remaining" if kind == "session" else f"Weekly Limit Remaining ({scope or 'all models'})"
+        if month:
+            zone = ZoneInfo(tz)
+            hour24 = int(hour) % 12 + (12 if ampm == "pm" else 0)
+            resets = datetime(now.year, _MONTHS[month], int(day), hour24, int(minute or 0), tzinfo=zone)
+            if resets < now - timedelta(days=1):  # cruzó de año
+                resets = resets.replace(year=now.year + 1)
+        else:
+            # Sin fecha de renovación: se vuelve a consultar en una hora.
+            resets = now + timedelta(hours=1)
+        windows.append(Window(CLAUDE_FAMILY, name, 100 - int(used), resets))
+    return windows
+
+
+async def read_claude(force: bool = False) -> list[Window]:
+    """Cuota de la suscripción de Claude. Consultarla no gasta nada (0 turnos, 0 USD)."""
+    global _claude_cache
+    if not force and _claude_cache and time.monotonic() - _claude_cache[0] < CACHE_SECONDS:
+        return _claude_cache[1]
+    if _FAKE_CLAUDE_FILE:
+        with open(_FAKE_CLAUDE_FILE, encoding="utf-8") as fh:
+            text = fh.read()
+    else:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                config.CLAUDE_BIN, "-p", "/usage", "--output-format", "json",
+                "--safe-mode", "--setting-sources", "project", "--strict-mcp-config",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            raw, _ = await asyncio.wait_for(process.communicate(), timeout=60)
+            text = json.loads(raw.decode("utf-8", "replace")).get("result", "")
+        except (OSError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            log.warning("no pude consultar la cuota de Claude: %s", exc)
+            return []
+    windows = parse_claude(text)
+    if not windows:
+        log.warning("/usage de Claude no devolvió ventanas: %r", text[:200])
+    _claude_cache = (time.monotonic(), windows)
+    return windows
+
+
+async def read_all(force: bool = False) -> list[Window]:
+    """Todas las ventanas de los motores que se usan."""
+    # Copia: `read` devuelve la lista del caché, y sumarle ventanas la ensuciaría.
+    windows = list(await read(force))
+    if "claude" in config.ENGINES.values():
+        windows += await read_claude(force)
+    return windows
+
+
+async def exhausted(roles: list[str] | set[str], force: bool = False) -> list[Window]:
+    """Ventanas agotadas de los motores que usan esos roles. Cada motor tiene su umbral:
+    Claude se pausa antes porque comparte la suscripción con el uso propio del usuario."""
+    low = []
+    agy_roles = [r for r in roles if config.ENGINES[r] == "agy"]
+    if agy_roles:
+        families = {family_for(config.MODELS[r]) for r in agy_roles}
+        low += [
+            w for w in await read(force)
+            if w.family in families and w.remaining <= config.QUOTA_MIN_REMAINING
+        ]
+    claude_models = [config.MODELS[r].lower() for r in roles if config.ENGINES[r] == "claude"]
+    if claude_models:
+        for w in await read_claude(force):
+            if w.remaining > config.QUOTA_MIN_REMAINING_CLAUDE:
+                continue
+            # Una ventana propia de un modelo ("semanal de Opus") solo frena a ese modelo.
+            scope = re.search(r"\(([^)]*)\)", w.name)
+            model = scope.group(1).split()[0].lower() if scope and scope.group(1) != "all models" else ""
+            if not model or any(model in m for m in claude_models):
+                low.append(w)
+    return low
 
 
 def resume_at(windows: list[Window]) -> datetime:

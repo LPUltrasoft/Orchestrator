@@ -257,7 +257,7 @@ async def _resume_later(entry: dict) -> None:
 async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
     async with _chat_locks[body.chat_id]:
         # Antes de gastar nada: si la cuota no alcanza, el pedido espera la renovación.
-        low = await quota.exhausted(list(config.MODELS.values()), force=True)
+        low = await quota.exhausted(["orchestrator"], force=True)
         if low:
             await _pause(body.chat_id, body.text, body.from_name, low)
             jobs.finish(job_id, result={"paused_until": quota.resume_at(low).isoformat()})
@@ -363,7 +363,7 @@ async def _run_mesa(
             before = {a["id"] for a in await asyncio.to_thread(process.list_adrs, project)}
             for index in range(start, len(plan)):
                 step = plan[index]
-                low = await quota.exhausted([config.MODELS[step.role]], force=True)
+                low = await quota.exhausted([step.role], force=True)
                 if low:
                     paused = True
                     await _pause(
@@ -726,7 +726,7 @@ async def health() -> dict:
         "quota": [
             {"family": w.family, "window": w.label, "remaining": w.remaining,
              "resets_at": w.resets_at.isoformat()}
-            for w in await quota.read()
+            for w in await quota.read_all()
         ],
         "vault": str(config.VAULT_PATH),
         "projects": vault.list_projects(),
@@ -766,7 +766,7 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
         if live:
             live.agent_done(role, False, "⛔ todavía no es su fase")
         raise HTTPException(409, blocked)
-    low = await quota.exhausted([config.MODELS[role]], force=True)
+    low = await quota.exhausted([role], force=True)
     if low:
         until = quota.resume_at(low)
         if x_orc_job:

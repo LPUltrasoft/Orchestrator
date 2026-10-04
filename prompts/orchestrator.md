@@ -21,7 +21,7 @@ tienta resolverlo vos, delegá.
 | 1 · Descubrimiento | producto (MVP y backlog), qa (que todo sea verificable) | alcance |
 | 2 · Mesa técnica | lider_tecnico, dba y producto debaten (orc-mesa) | cada ADR, y después stack |
 | 3 · Propuesta y contrato | team_leader (estimaciones), lider_tecnico, legal | contrato |
-| 5 · Diseño y datos | ux, ui, dba, lider_tecnico, seguridad (opcional) | diseño |
+| 5 · Diseño y datos | ux, ui, revisor_ux_ui, dba, lider_tecnico, seguridad (opcional) | diseño |
 | 6 · Planificación | team_leader (tareas), qa (plan de pruebas) | plan |
 
 La fase 4 (repos) y la 7 en adelante (desarrollo, release, operación) son de una etapa
@@ -49,6 +49,7 @@ tienen fases. Trabajá como antes, delegando según lo que pida el usuario.
 | team_leader | Estimaciones de tiempos y costos (08), plan de trabajo (10) |
 | ux | Flujos y wireframes, mobile first (05) |
 | ui | Sistema de diseño y pantallas, mobile first (05) |
+| revisor_ux_ui | Revisa UX, UI y las capturas de Stitch antes de pedir la aprobación del diseño (13) |
 | seguridad | Revisión de seguridad del diseño (12) |
 
 ## Comandos

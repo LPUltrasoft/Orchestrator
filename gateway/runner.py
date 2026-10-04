@@ -236,6 +236,171 @@ async def run_agy(
     return data
 
 
+# ── Motor Claude Code ───────────────────────────────────────────────────────────
+
+# Exactamente estas herramientas: sin shell, sin publicar páginas, sin programar tareas
+# ni lanzar otros agentes (con la configuración por defecto, el CLI trae todo eso).
+CLAUDE_TOOLS = "Read,Write,Edit,Glob,Grep"
+# Herramienta de Claude -> (nombre en agy, parámetro en agy, parámetro en Claude): así el
+# progreso en vivo y el diagnóstico de denegaciones son los mismos para los dos motores.
+_CLAUDE_AS_AGY = {
+    "Read": ("view_file", "AbsolutePath", "file_path"),
+    "Write": ("write_to_file", "TargetFile", "file_path"),
+    "Edit": ("replace_file_content", "TargetFile", "file_path"),
+    "MultiEdit": ("multi_replace_file_content", "TargetFile", "file_path"),
+    "Glob": ("find_by_name", "Pattern", "pattern"),
+    "Grep": ("grep_search", "Query", "pattern"),
+}
+
+
+def _claude_step(tool: str, arguments: dict) -> dict:
+    name, param, source = _CLAUDE_AS_AGY.get(tool, (tool, "", ""))
+    params = {param: arguments.get(source, "")} if param else {}
+    return {"step_type": "tool", "state": "ACTIVE", "tool_name": name,
+            "tool_info": {"name": name, "parameters": params}}
+
+
+def _claude_result(event: dict) -> dict:
+    """El evento `result` de Claude Code, en el mismo formato que el de agy."""
+    usage = event.get("usage") or {}
+    prompt_tokens = sum(usage.get(k, 0) or 0 for k in
+                        ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    output = usage.get("output_tokens", 0) or 0
+    return {
+        "conversation_id": event.get("session_id"),
+        "status": "SUCCESS" if event.get("subtype") == "success" and not event.get("is_error") else "ERROR",
+        "response": event.get("result") or "",
+        "usage": {
+            "input_tokens": prompt_tokens,
+            "output_tokens": output,
+            "cache_read_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+            "total_tokens": prompt_tokens + output,
+        },
+        "denied_actions": [
+            {"action": d.get("tool_name", "?"), "display_name": d.get("tool_name", "?")}
+            for d in event.get("permission_denials") or []
+        ],
+        "cost_usd": event.get("total_cost_usd"),
+    }
+
+
+async def run_claude(
+    *,
+    prompt: str,
+    model: str,
+    effort: str | None,
+    cwd: Path,
+    session_id: str | None = None,
+    timeout: int | None = None,
+    denied_retries: int = 2,
+    on_step: StepCallback | None = None,
+) -> dict:
+    """Corre un agente con el CLI de Claude Code, aislado de la configuración personal
+    del usuario, y devuelve su resultado con el mismo formato que run_agy."""
+    argv = [
+        config.CLAUDE_BIN, "-p",
+        "--output-format", "stream-json", "--verbose",
+        "--model", model,
+        # Sin esto, el agente hereda los permisos, hooks, plugins y MCP del usuario: en
+        # la primera prueba, un `ls` corrió aunque Bash no estaba permitido.
+        "--safe-mode", "--setting-sources", "project", "--strict-mcp-config",
+        "--permission-mode", "dontAsk",
+        "--tools", CLAUDE_TOOLS,
+        "--add-dir", str(config.VAULT_PATH),
+        # --tools dice qué herramientas existen, no les da permiso: en dontAsk todo lo
+        # no permitido se deniega, incluso escribir en la propia carpeta. Los permisos van
+        # acotados: leer solo el vault, escribir solo en la carpeta del proyecto.
+        # ("//" = ruta absoluta en las reglas de Claude Code.)
+        "--allowedTools", f"Read(/{config.VAULT_PATH.resolve()}/**)", f"Edit(/{cwd.resolve()}/**)",
+    ]
+    if effort:
+        argv += ["--effort", effort]
+    if session_id:
+        argv += ["--resume", session_id]
+
+    process = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=str(cwd),
+        # El prompt va por stdin: los de los agentes son largos.
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        limit=16 * 1024 * 1024,
+    )
+    process.stdin.write(prompt.encode("utf-8"))
+    await process.stdin.drain()
+    process.stdin.close()
+
+    result_event: dict | None = None
+    lines: list[str] = []
+    last_by_tool: dict[str, dict] = {}
+
+    async def pump() -> None:
+        nonlocal result_event
+        async for raw in process.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line:
+                continue
+            lines.append(line)
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "result":
+                result_event = event
+            elif event.get("type") == "assistant":
+                for item in (event.get("message") or {}).get("content") or []:
+                    if item.get("type") == "tool_use":
+                        step = _claude_step(item.get("name", ""), item.get("input") or {})
+                        last_by_tool[step["tool_name"]] = step["tool_info"]["parameters"]
+                        _notify_step(on_step, step)
+
+    stderr_task = asyncio.create_task(process.stderr.read())
+    try:
+        await asyncio.wait_for(pump(), timeout=timeout or config.JOB_TIMEOUT)
+        await process.wait()
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        stderr_task.cancel()
+        raise RuntimeError(f"claude superó el timeout de {timeout or config.JOB_TIMEOUT}s y fue cancelado")
+    stderr = (await stderr_task).decode("utf-8", "replace")
+    if result_event is None:
+        tail = "\n".join(lines)[-1500:] or stderr[-1500:]
+        raise RuntimeError(f"claude no devolvió un resultado (código {process.returncode}): {tail}")
+
+    data = _claude_result(result_event)
+    denied = data["denied_actions"]
+    if denied and not data["response"].strip():
+        detail = _denied_detail(denied, last_by_tool)
+        if denied_retries > 0 and data["conversation_id"]:
+            log.warning("claude denegó %s; reanudo la sesión con una indicación", detail)
+            _notify_step(on_step, {"synthetic": "retry", "detail": detail})
+            return await run_claude(
+                prompt=DENIED_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
+                session_id=data["conversation_id"], timeout=timeout,
+                denied_retries=denied_retries - 1, on_step=on_step,
+            )
+        raise RuntimeError(f"claude denegó herramientas: {detail}")
+    if data["status"] != "SUCCESS" and not data["response"].strip():
+        raise RuntimeError(f"claude terminó con error: {stderr[-500:] or result_event}")
+    return data
+
+
+def _tools_note(role: str) -> str:
+    if config.ENGINES[role] == "claude":
+        return (
+            "Tenés `Read`, `Write`, `Edit`, `Glob` y `Grep`, y nada más: no hay shell. Con "
+            "`Read` también podés mirar imágenes (por ejemplo, capturas de pantallas)."
+        )
+    return (
+        "Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,\n"
+        "`grep_search`, `find_by_name`, `write_to_file` y `replace_file_content`. **No uses\n"
+        "`run_command`**: corrés sin supervisión y cualquier comando shell fuera de una lista\n"
+        "corta se deniega automáticamente, lo que corta tu trabajo a la mitad."
+    )
+
+
 def build_subagent_prompt(role: str, project: str, instruction: str, project_path: Path) -> str:
     """Prompt autocontenido: el sub-agente no ve la charla de Telegram."""
     return f"""{config.prompt_for(role)}
@@ -269,6 +434,7 @@ Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 | 10 - Plan de Trabajo | Team leader |
 | 11 - Plan de Pruebas | QA |
 | 12 - Revisión de Seguridad | Seguridad |
+| 13 - Revisión UX-UI | Revisor de UX y UI |
 | ADRs/ADR-NNN - Título.md | Líder técnico |
 | Mesa Técnica/ | Los participantes de la mesa |
 
@@ -278,10 +444,7 @@ mantiene el sistema) **ni un ADR aprobado** (si una decisión cambia, va un ADR 
 
 # Herramientas
 
-Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,
-`grep_search`, `find_by_name`, `write_to_file` y `replace_file_content`. **No uses
-`run_command`**: corrés sin supervisión y cualquier comando shell fuera de una lista
-corta se deniega automáticamente, lo que corta tu trabajo a la mitad.
+{_tools_note(role)}
 
 # Tarea
 
@@ -305,13 +468,17 @@ async def invoke_subagent(
     project_path = await asyncio.to_thread(vault.project_dir, project)
     with project_lock(project):
         before = await asyncio.to_thread(vault.snapshot)
-        result = await run_agy(
-            prompt=build_subagent_prompt(role, project, instruction, project_path),
-            model=config.MODELS[role],
-            cwd=project_path,
-            caller=role,
-            on_step=on_step,
-        )
+        prompt = build_subagent_prompt(role, project, instruction, project_path)
+        if config.ENGINES[role] == "claude":
+            result = await run_claude(
+                prompt=prompt, model=config.MODELS[role], effort=config.EFFORTS[role],
+                cwd=project_path, on_step=on_step,
+            )
+        else:
+            result = await run_agy(
+                prompt=prompt, model=config.MODELS[role], cwd=project_path,
+                caller=role, on_step=on_step,
+            )
         # git bloquea: fuera del event loop para no frenar las demás requests.
         files_changed = await asyncio.to_thread(vault.changed_since, before)
         complete = result.get("status") == "SUCCESS"
