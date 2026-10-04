@@ -42,6 +42,12 @@ QUOTA_MIN_REMAINING = int(os.environ.get("QUOTA_MIN_REMAINING", "5"))
 # Margen después de la hora de renovación antes de retomar.
 QUOTA_RESUME_BUFFER = int(os.environ.get("QUOTA_RESUME_BUFFER", "60"))
 
+# Stitch (Google Labs): diseño de pantallas. La API key se crea en Stitch → Settings →
+# API Keys. Sin ella, todo funciona menos la generación de pantallas.
+STITCH_API_KEY = os.environ.get("STITCH_API_KEY", "")
+STITCH_URL = os.environ.get("STITCH_URL", "https://stitch.googleapis.com/mcp")
+STITCH_MODEL = os.environ.get("STITCH_MODEL", "GEMINI_3_8_FLASH")
+
 # Alternativa: n8n como puerta de Telegram (requiere túnel HTTPS, ver n8n/README.md).
 N8N_CALLBACK_URL = os.environ.get("N8N_CALLBACK_URL", "")
 

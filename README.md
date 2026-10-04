@@ -57,7 +57,7 @@ sobrescribe si no lo puede parsear):
   "permissions": {
     "allow": [
       "command(orc-delegate)", "command(orc-mesa)", "command(orc-aprobacion)",
-      "command(orc-estado)",
+      "command(orc-estado)", "command(orc-diseno)",
       "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
       "command(git log)", "command(git status)", "command(git diff)"
     ]
@@ -181,6 +181,7 @@ Cada modelo se cambia con `MODEL_<ROL>` en el `.env`.
 | `orc-estado <proyecto>` | Fase, qué hacer ahora, qué espera al usuario |
 | `orc-delegate <rol> <proyecto> "<instrucción>"` | Delega y espera el resultado |
 | `orc-mesa <proyecto> "<tema>" [rondas]` | Convoca la mesa técnica, en segundo plano |
+| `orc-diseno <proyecto> [editar <id> "<cambio>"]` | Genera o corrige pantallas en Stitch y te manda las capturas |
 | `orc-aprobacion <proyecto> <puerta> "<resumen>"` | Le manda al usuario el pedido con botones |
 
 Todos tienen `--help` y comparten `bin/_orc_common.sh`. **Solo el orquestador puede
@@ -197,6 +198,22 @@ usarlos**: el gateway marca quién invoca cada `agy` en `ORC_CALLER`.
   cambios pedidos, para que los delegue y vuelva a pedir la aprobación.
 - Un pedido nuevo de la misma puerta reemplaza al anterior; un botón viejo responde
   "ya no está vigente".
+
+### Diseño con Stitch
+
+En la fase 5, el rol `ui` escribe `Diseño/DESIGN.md` (sistema de diseño) y
+`Diseño/Pantallas.md` (cada pantalla con su prompt, en un bloque JSON). `orc-diseno`
+hace el resto, en el gateway: crea el proyecto en Stitch, carga el sistema de diseño
+(`upload_design_md` + `create_design_system_from_design_md`), genera cada pantalla para
+celular, baja la captura y el HTML a `Diseño/Pantallas/`, arma el índice
+`Pantallas generadas.md` y te manda las capturas por Telegram en un álbum. Si una
+pantalla falla, sigue con las demás. `orc-diseno <proyecto> editar <id> "<cambio>"`
+corrige una pantalla con la edición nativa de Stitch.
+
+Habla con el MCP oficial (`https://stitch.googleapis.com/mcp`, sin estado, JSON plano)
+desde `gateway/stitch.py`, no desde el agente: así puede bajar las capturas y la API key
+queda en el `.env` (`STITCH_API_KEY`, se crea en Stitch → Settings → API Keys). Modelo:
+`STITCH_MODEL`, por defecto `GEMINI_3_8_FLASH`.
 
 ### La mesa técnica
 
@@ -221,6 +238,7 @@ Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 | `POST` | `/agents/{rol}` | Invocar un sub-agente directo (síncrono; respeta las fases) |
 | `POST` | `/aprobaciones` | Pedido de aprobación con botones (`orc-aprobacion`) |
 | `POST` | `/mesa` | Convocar la mesa técnica (`orc-mesa`) |
+| `POST` | `/diseno` | Generar o corregir pantallas en Stitch (`orc-diseno`) |
 | `GET` | `/proyectos/{proyecto}/estado` | Fase y qué sigue (`orc-estado`) |
 | `GET` | `/jobs/{id}` | Estado de un trabajo |
 | `POST` | `/sessions/{chat_id}/reset` | Borrar la memoria de ese chat |

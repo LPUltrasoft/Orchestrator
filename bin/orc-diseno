@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Genera pantallas en Stitch, o aplica un cambio a una, y se las manda al usuario.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+orc-diseno — genera las pantallas del proyecto en Stitch (para celular), con el sistema
+de diseño de la carpeta «Diseño», y le manda al usuario las capturas por Telegram.
+
+USO
+  orc-diseno <proyecto>                              todas las pantallas
+  orc-diseno <proyecto> <id> [<id> ...]              solo esas pantallas
+  orc-diseno <proyecto> editar <id> "<cambio>"       aplica un cambio a una pantalla
+
+ANTES
+  El rol ui tiene que haber escrito «Diseño/DESIGN.md» y «Diseño/Pantallas.md» (con el
+  bloque JSON de pantallas). Si falta, el comando lo dice.
+
+EJEMPLOS
+  orc-diseno "App de Turnos"
+  orc-diseno "App de Turnos" editar reservar "Que el botón Reservar ocupe todo el ancho y sea verde"
+
+SALIDA
+  JSON con status "iniciado". Corre en segundo plano y tarda unos minutos: terminá tu
+  turno. El usuario ve el progreso y las capturas, y el sistema te despierta al terminar.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 1 ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-diseno
+PROJECT="$1"; shift
+
+if [[ "${1:-}" == "editar" ]]; then
+  [[ $# -lt 3 ]] && { usage >&2; exit 64; }
+  SCREEN="$2"; shift 2
+  PAYLOAD=$(PROJECT="$PROJECT" SCREEN="$SCREEN" CHANGE="$*" python3 -c '
+import json, os
+print(json.dumps({"project": os.environ["PROJECT"], "edit": os.environ["SCREEN"], "change": os.environ["CHANGE"]}, ensure_ascii=False))')
+else
+  PAYLOAD=$(PROJECT="$PROJECT" python3 -c '
+import json, os, sys
+screens = sys.argv[1:] or None
+print(json.dumps({"project": os.environ["PROJECT"], "screens": screens}, ensure_ascii=False))' "$@")
+fi
+orc_post "/diseno" "$PAYLOAD"

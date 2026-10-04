@@ -7,6 +7,7 @@ nada de eso y ningún puerto del sistema queda expuesto a internet.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -143,6 +144,31 @@ class TelegramBot:
             await self.call("answerCallbackQuery", callback_query_id=callback_id, text=text)
         except (httpx.HTTPError, TelegramError, ValueError):
             pass
+
+    async def send_album(self, chat_id: str, photos: list[tuple[bytes, str]]) -> None:
+        """Capturas como álbum (de a 10, el máximo de Telegram), cada una con su texto."""
+        for start in range(0, len(photos), 10):
+            chunk = photos[start:start + 10]
+            if len(chunk) == 1:
+                image, caption = chunk[0]
+                files = {"photo": ("pantalla.png", image, "image/png")}
+                data = {"chat_id": chat_id, "caption": caption[:1024]}
+                method = "sendPhoto"
+            else:
+                files = {
+                    f"p{i}": (f"pantalla{i}.png", image, "image/png")
+                    for i, (image, _) in enumerate(chunk)
+                }
+                media = [
+                    {"type": "photo", "media": f"attach://p{i}", "caption": caption[:1024]}
+                    for i, (_, caption) in enumerate(chunk)
+                ]
+                data = {"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)}
+                method = "sendMediaGroup"
+            response = await self._client.post(f"{self._url}/{method}", data=data, files=files)
+            result = response.json()
+            if not result.get("ok"):
+                raise TelegramError(f"{method}: {result.get('error_code')} {result.get('description')}")
 
     async def typing(self, chat_id: str) -> None:
         try:

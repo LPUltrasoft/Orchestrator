@@ -17,7 +17,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, jobs, process, progress, quota, runner, sessions, telegram, vault
+from . import config, design, jobs, process, progress, quota, runner, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -77,6 +77,14 @@ class ApprovalIn(BaseModel):
     gate: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     chat_id: str | None = None  # sin X-Orc-Job: pruebas o uso manual
+
+
+class DesignIn(BaseModel):
+    project: str = Field(min_length=1)
+    screens: list[str] | None = None  # solo esas pantallas; vacío = todas
+    edit: str | None = None  # id de una pantalla ya generada a la que aplicar un cambio
+    change: str | None = None
+    chat_id: str | None = None
 
 
 class MesaIn(BaseModel):
@@ -415,6 +423,91 @@ async def _run_mesa(
             _start_job(ChatIn(chat_id=chat_id, text=text))
 
 
+def _start_design(chat_id: str, project: str, only: list[str] | None, edit: str | None, change: str | None) -> str:
+    _pending[chat_id] += 1
+    label = f"cambio en {edit}" if edit else "pantallas en Stitch"
+    job_id = jobs.create("diseno", {"chat_id": chat_id, "text": f"diseño: {label}", "project": project})
+    _track(chat_id, asyncio.create_task(_run_design(job_id, chat_id, project, only, edit, change)))
+    return job_id
+
+
+async def _run_design(
+    job_id: str, chat_id: str, project: str,
+    only: list[str] | None, edit: str | None, change: str | None,
+) -> None:
+    """Genera (o corrige) pantallas en Stitch, te las manda como álbum y despierta al
+    orquestador. Corre en el gateway: generar diez pantallas lleva varios minutos."""
+    async with _chat_locks[chat_id]:
+        title = f"✏️ Cambio de diseño: {project}" if edit else f"🖌️ Diseño en Stitch: {project}"
+        live = progress.Progress(bot, chat_id, title=title) if bot else None
+        typing = asyncio.create_task(_keep_typing(chat_id)) if bot else None
+        if live:
+            _progress[job_id] = live
+            await live.start(with_director=False)
+
+        def on_screen(spec: design.ScreenSpec, status: str, detail: str) -> None:
+            if not live:
+                return
+            if status == "start":
+                live.section("stitch", spec.title)
+            elif status == "done":
+                live.agent_done("stitch", True, "lista")
+            else:
+                live.agent_done("stitch", False, f"⚠️ {detail[:100]}")
+
+        ok = False
+        rendered: list[design.Rendered] = []
+        errors: list[str] = []
+        try:
+            if edit:
+                rendered = [await design.edit(project, edit, change or "", on_screen)]
+            else:
+                rendered, errors = await design.generate(project, only, on_screen)
+            ok = bool(rendered) and not errors
+            jobs.finish(job_id, result={"pantallas": [r.id for r in rendered], "errores": errors})
+        except Exception as exc:  # noqa: BLE001 - el diseño nunca debe morir en silencio
+            log.exception("el diseño %s falló", job_id)
+            jobs.finish(job_id, error=str(exc))
+            errors.append(str(exc))
+        finally:
+            if typing:
+                typing.cancel()
+            if live:
+                await live.finish(ok)
+                _progress.pop(job_id, None)
+
+        if bot and rendered:
+            photos = [
+                (await asyncio.to_thread(r.png.read_bytes),
+                 f"✏️ {r.title}: {change}" if edit else f"{i}/{len(rendered)} · {r.title}")
+                for i, r in enumerate(rendered, 1)
+            ]
+            try:
+                await bot.send_album(chat_id, photos)
+            except (httpx.HTTPError, telegram.TelegramError) as exc:
+                log.error("no pude mandar las capturas: %s", exc)
+                errors.append(f"no pude mandarte las capturas por Telegram: {exc}")
+
+        names = ", ".join(f"{r.title} ({r.id})" for r in rendered) or "ninguna"
+        problems = ("\nProblemas: " + "; ".join(errors)) if errors else ""
+        state = await asyncio.to_thread(process.load, project)
+        if edit:
+            what = f"Stitch aplicó el cambio «{change}» a la pantalla {names}"
+        else:
+            what = f"Stitch generó {len(rendered)} pantalla(s) de «{project}»: {names}"
+        next_step = (
+            "Si UX, UI, el 03 y el 04 ya están, pedí la aprobación «diseño» con un resumen; "
+            "si falta algo de la fase 5, seguí con eso."
+            if state is not None else
+            "Preguntale al usuario qué le parecen."
+        )
+        _start_job(ChatIn(chat_id=chat_id, text=(
+            f"(Mensaje del sistema) {what}. El usuario ya vio las capturas en Telegram.{problems}\n\n"
+            f"Qué hacer ahora: {next_step} Si pide cambios en una pantalla, usá "
+            f"orc-diseno \"{project}\" editar <id> \"<cambio>\"."
+        )))
+
+
 def _start_job(body: ChatIn) -> tuple[str, bool]:
     """Lanza un turno del orquestador. Devuelve (job_id, quedó_en_cola)."""
     chat_id = body.chat_id
@@ -624,6 +717,7 @@ async def health() -> dict:
             "bot": bot.username if bot else None,
         },
         "inflight": len(_inflight),
+        "stitch": stitch.configured(),
         "paused": len(_load_paused()),
         "quota": [
             {"family": w.family, "window": w.label, "remaining": w.remaining,
@@ -758,6 +852,35 @@ async def start_mesa(body: MesaIn, x_orc_job: str = Header(default="")) -> dict:
         "carpeta": folder,
         "pasos": steps,
         "siguiente": "Terminá tu turno: el usuario ve el progreso y el sistema te despierta al terminar.",
+    }
+
+
+@app.post("/diseno", dependencies=[Depends(auth)], status_code=202)
+async def start_design(body: DesignIn, x_orc_job: str = Header(default="")) -> dict:
+    """Genera pantallas en Stitch o aplica un cambio. Corre en segundo plano."""
+    if not stitch.configured():
+        raise HTTPException(409, "Falta STITCH_API_KEY en el .env del gateway (se crea en Stitch → Settings → API Keys).")
+    chat_id = _chat_for(x_orc_job) or body.chat_id
+    if not chat_id:
+        raise HTTPException(400, "no sé a qué chat mandar las capturas")
+    state = await asyncio.to_thread(process.load, body.project)
+    blocked = process.check_role(state, "ui")
+    if blocked:
+        raise HTTPException(409, blocked)
+    try:
+        if body.edit:
+            if not body.change:
+                raise ValueError("Para editar una pantalla hace falta el cambio a aplicar.")
+            if body.edit not in (await asyncio.to_thread(design.load_state, body.project))["screens"]:
+                raise ValueError(f"La pantalla «{body.edit}» todavía no está generada.")
+        else:
+            await asyncio.to_thread(design.specs, body.project)  # falla rápido si UI no la escribió
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    _start_design(chat_id, body.project, body.screens, body.edit, body.change)
+    return {
+        "status": "iniciado",
+        "siguiente": "Terminá tu turno: el usuario ve el progreso y las capturas, y el sistema te despierta al terminar.",
     }
 
 

@@ -32,6 +32,7 @@ AGENTS = {
     "ui": "🎨 UI",
     "seguridad": "🛡️ Seguridad",
     "nestjs": "🧱 NestJS",
+    "stitch": "🖌️ Stitch",
 }
 MAX_ACTIONS = 4  # acciones visibles por agente: el mensaje tiene que entrar en pantalla
 EDIT_EVERY = 3.0  # Telegram limita cuántas veces por segundo se edita un mensaje
@@ -100,6 +101,8 @@ def _describe_command(command: str) -> str | None:
     if name == "orc-aprobacion":
         gate = args[1] if len(args) > 1 else ""
         return f"⛩ te pide aprobar {gate}".rstrip()
+    if name == "orc-diseno":
+        return "🖌️ le pide las pantallas a Stitch"
     if name == "orc-estado":
         return "📍 mira el estado del proyecto"
     if name == "ls":

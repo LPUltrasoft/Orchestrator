@@ -261,6 +261,8 @@ Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 | 03 - Modelo de Datos & Liquibase Changelogs | DBA |
 | 04 - Especificación API REST & Contratos de Integración | Líder técnico |
 | 05 - Frontend & Experiencia de Usuario (UI-UX) | UX y UI |
+| Diseño/DESIGN.md y Diseño/Pantallas.md | UI |
+| Diseño/Pantallas/ y Diseño/stitch.json | El sistema (Stitch) |
 | 06 - DevOps, Docker & CI-CD | DevOps |
 | 08 - Estimaciones | Team leader |
 | 09 - Propuesta y Contrato | Legal |

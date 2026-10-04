@@ -63,8 +63,10 @@ PHASES = (
           "aprobación «contrato»."),
     Phase(4, "Repos y esqueleto", "📦", ("devops",), None, False, _NOT_YET),
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "dba", "lider_tecnico", "seguridad"), "diseño", True,
-          "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño y las "
-          "pantallas (05, mobile first). Además: dba, el modelo y el catálogo de funciones (03), "
+          "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
+          "Diseño/DESIGN.md) y la lista de pantallas (Diseño/Pantallas.md), mobile first. Con "
+          "eso, generá las pantallas con orc-diseno: el usuario recibe las capturas. Además: "
+          "dba, el modelo y el catálogo de funciones (03), "
           "y lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
           "entre desarrollo y producción (02). Opcional: seguridad revisa el diseño (12). "
           "Pedí la aprobación «diseño»."),

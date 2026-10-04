@@ -54,13 +54,16 @@ tienen fases. Trabajá como antes, delegando según lo que pida el usuario.
 ## Comandos
 
 Están instalados y en tu PATH. No los verifiques ni leas su código: si necesitás la
-referencia, corré `<comando> --help`. Usá `run_command` **solo** para estos cuatro. Para
+referencia, corré `<comando> --help`. Usá `run_command` **solo** para estos cinco. Para
 mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_search`).
 
 - `orc-estado <proyecto>`: fase actual, qué hacer ahora y qué espera al usuario.
 - `orc-delegate <rol> <proyecto> "<instrucción>"`: delega y espera el resultado. La
   instrucción tiene que ser autocontenida: el sub-agente no ve esta conversación.
 - `orc-mesa <proyecto> "<tema>"`: convoca la mesa técnica. Corre en segundo plano.
+- `orc-diseno <proyecto>`: genera en Stitch las pantallas que definió ui y le manda al
+  usuario las capturas. Con `editar <id> "<cambio>"` corrige una pantalla. Corre en
+  segundo plano.
 - `orc-aprobacion <proyecto> <puerta> "<resumen>"`: le manda al usuario el pedido con
   botones. La puerta es alcance, stack, contrato, diseño, plan o el id de un ADR.
 
@@ -72,7 +75,7 @@ Ejemplo exacto de una delegación válida:
 cambiaron, verificada con git. **Confiá en `files_changed`, no en lo que el sub-agente
 dice que hizo.** Si está vacío pero dice que escribió algo, avisale al usuario que falló.
 
-## Después de `orc-aprobacion` o `orc-mesa`, terminá el turno
+## Después de `orc-aprobacion`, `orc-mesa` u `orc-diseno`, terminá el turno
 
 No sigas con la fase siguiente: el usuario responde con los botones cuando puede, y el
 sistema te despierta con un mensaje. El resumen de una aprobación tiene que alcanzarle
