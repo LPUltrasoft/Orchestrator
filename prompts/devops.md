@@ -56,8 +56,13 @@ con cada merge a `develop`, y **despliegue a producción solo con aprobación ma
   que se pueden restaurar. **Siempre con una copia fuera del servidor de producción**
   (si el servidor se pierde, los backups no pueden perderse con él), a la que el usuario
   pueda acceder desde cualquier lado, y un aviso por Telegram de cada backup y de cada
-  prueba de restauración. El destino de esa copia lo elige el usuario: si no está
-  decidido, marcalo «[A DECIDIR POR EL USUARIO]» y proponé opciones con su costo.
+  prueba de restauración. **Destino decidido por el usuario (4/10/2026): su Google
+  Drive** (cuenta `lpalmieri.ultrasoft`), con rclone (remoto `drive-backups`, permiso
+  `drive.file`: solo ve lo que sube él), en `Backups Orchestrator/<proyecto>/produccion/`.
+  Cifrados con GPG con la clave pública del proyecto: el servidor nunca tiene la clave
+  privada. **Retención pensada para los 15 GB gratis de Drive** (por ejemplo, 7 diarios,
+  4 semanales y 6 mensuales) y aviso cuando el espacio pase el 80%. El token de rclone
+  del servidor es un secreto más (ver «Secretos»).
 
 ### Operación (fase 9)
 Grafana, Loki y Prometheus (no ELK): qué métricas y logs se juntan, qué alertas hay
