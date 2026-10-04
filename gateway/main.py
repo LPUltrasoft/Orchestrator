@@ -205,8 +205,9 @@ async def _push_vault() -> None:
 
 
 async def _check_drive() -> None:
-    """Avisa si el Drive de los backups pasa el umbral: al cruzarlo, y una vez por semana
-    mientras siga arriba. Cuando baja, avisa que se liberó."""
+    """Revisa el Drive de los backups; la pide cada backup antes de subir. Avisa si pasa el
+    umbral: al cruzarlo, y una vez por semana mientras siga arriba (los backups son
+    diarios: no hace falta el mismo aviso todos los días). Cuando baja, avisa que se liberó."""
     try:
         u = await drive.usage()
     except (RuntimeError, OSError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
@@ -224,16 +225,6 @@ async def _check_drive() -> None:
     elif _drive["avisado"] and u["usado"] < limit - 0.5 * drive.GIB:
         _drive["avisado"] = None
         await _alert(f"✅ El Drive de los backups bajó a {drive.gb(u['usado'])}: hay espacio de nuevo.")
-
-
-async def _drive_watcher() -> None:
-    await asyncio.sleep(60)  # que el arranque no espere a Google
-    while True:
-        try:
-            await _check_drive()
-        except Exception:  # noqa: BLE001 — que un error raro no apague el control
-            log.exception("error inesperado revisando el espacio de Drive")
-        await asyncio.sleep(config.DRIVE_CHECK_INTERVAL)
 
 
 async def _vault_pusher() -> None:
@@ -788,10 +779,6 @@ async def lifespan(_: FastAPI):
     pusher = None
     if config.VAULT_AUTOCOMMIT and config.VAULT_AUTOPUSH:
         pusher = asyncio.create_task(_vault_pusher())
-    # Solo si rclone y el remoto de backups están configurados en esta PC.
-    drive_watcher = None
-    if Path(config.RCLONE_BIN).exists() and config.DRIVE_REMOTE:
-        drive_watcher = asyncio.create_task(_drive_watcher())
 
     yield
 
@@ -804,8 +791,6 @@ async def lifespan(_: FastAPI):
     if _inflight:
         log.info("esperando %d trabajo(s) en curso antes de apagar", len(_inflight))
         await asyncio.wait(_inflight, timeout=SHUTDOWN_GRACE)
-    if drive_watcher:
-        drive_watcher.cancel()
     if pusher:
         pusher.cancel()
         # Lo último que commitearon los trabajos que acaban de terminar. Poco margen:
@@ -1037,6 +1022,27 @@ async def start_design(body: DesignIn, x_orc_job: str = Header(default="")) -> d
     return {
         "status": "iniciado",
         "siguiente": "Terminá tu turno: el usuario ve el progreso y las capturas, y el sistema te despierta al terminar.",
+    }
+
+
+@app.post("/drive/revision", dependencies=[Depends(auth)])
+async def drive_check() -> dict:
+    """Revisión del espacio del Drive de los backups. La llama cada backup antes de subir
+    (pedido del usuario: revisar solo en ese momento, no periódicamente)."""
+    if not Path(config.RCLONE_BIN).exists():
+        raise HTTPException(503, f"rclone no está instalado en {config.RCLONE_BIN}")
+    await _check_drive()
+    if _drive["error"]:
+        raise HTTPException(502, f"no pude revisar el Drive: {_drive['error']}")
+    u = _drive["uso"]
+    limit = config.DRIVE_ALERT_GB * drive.GIB
+    return {
+        "usado": u["usado"],
+        "total": u["total"],
+        "libre": u["total"] - u["usado"],
+        "umbral": int(limit),
+        "sobre_el_umbral": u["usado"] >= limit,
+        "client_id_compartido": u["client_id_compartido"],
     }
 
 

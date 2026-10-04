@@ -61,8 +61,13 @@ con cada merge a `develop`, y **despliegue a producción solo con aprobación ma
   `drive.file`: solo ve lo que sube él), en `Backups Orchestrator/<proyecto>/produccion/`.
   Cifrados con GPG con la clave pública del proyecto: el servidor nunca tiene la clave
   privada. **Retención pensada para los 15 GB gratis de Drive** (por ejemplo, 7 diarios,
-  4 semanales y 6 mensuales) y aviso cuando el espacio pase el 80%. El token de rclone
-  del servidor es un secreto más (ver «Secretos»).
+  4 semanales y 6 mensuales). **Antes de subir cada backup se revisa el espacio**, y
+  solo en ese momento (pedido del usuario): si el backup corre en la PC del usuario,
+  con `scripts/drive-revision.sh <bytes>` del Orchestrator (el gateway avisa por Telegram
+  si la cuenta llegó a 14 GB, y el script sale con 2 si no hay lugar); si corre en otro
+  servidor, la misma cuenta con `rclone about` y el aviso en el mensaje del backup. Sin
+  lugar, el backup no se sube: queda local y avisa. El token de rclone del servidor es
+  un secreto más (ver «Secretos»).
 
 ### Operación (fase 9)
 Grafana, Loki y Prometheus (no ELK): qué métricas y logs se juntan, qué alertas hay

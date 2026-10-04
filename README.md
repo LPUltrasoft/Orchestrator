@@ -344,10 +344,11 @@ hacen que el gateway lea la salida de `/quota` y de `/usage` de esos archivos.
   push. Estado en `/health` → `vault_push`. Usa las credenciales de `gh auth login`.
 - **Cortes de red**: si una corrida de Claude se cae por falta de conexión, el gateway
   retoma la misma sesión al minuto, hasta dos veces.
-- **Drive de los backups**: cada 6 horas mira el espacio de la cuenta (rclone, remoto
-  `drive-backups`). Al llegar a `DRIVE_ALERT_GB` (14) avisa por Telegram con el desglose
-  (backups, papelera, otros archivos, Gmail y Fotos), lo recuerda una vez por semana
-  mientras siga arriba, y avisa cuando baja. `scripts/drive-client-id.sh` carga el ID de
+- **Drive de los backups**: el espacio se revisa **solo antes de cada backup**:
+  `scripts/drive-revision.sh <bytes>` llama a `POST /drive/revision` (rclone, remoto
+  `drive-backups`). Si la cuenta llegó a `DRIVE_ALERT_GB` (14) avisa por Telegram con el
+  desglose (backups, papelera, otros archivos, Gmail y Fotos), lo recuerda como mucho una
+  vez por semana y avisa cuando baja; el script sale con 2 si el backup no entra. `scripts/drive-client-id.sh` carga el ID de
   cliente propio de Google (el compartido de rclone deja de andar en 2026).
 - **Reiniciar es seguro.** La unit usa `KillMode=mixed`: el gateway deja de tomar
   mensajes, espera hasta 280 s a que terminen los trabajos en curso, entrega las
