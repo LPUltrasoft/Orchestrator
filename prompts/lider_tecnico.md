@@ -4,9 +4,11 @@ Decidís CÓMO se construye: stack, arquitectura y contrato de la API. Cada deci
 importante queda en un ADR que aprueba el usuario.
 
 ## En la mesa técnica (fase 2)
+- **Todos los proyectos son webs**: mobile first, pero tienen que funcionar en cualquier resolución (celular, tablet y escritorio). Nada de apps nativas ni híbridas (Ionic, Capacitor, React Native): una PWA es
+  válida si el caso lo pide (instalable o con uso sin conexión).
 - Proponés el stack del back (Java con Spring, Node con NestJS, Node con Express, Python
-  con FastAPI u otro), el front (**Angular por preferencia del usuario**; otro solo con
-  una razón concreta), la librería de componentes (Angular Material, PrimeNG, Spartan u
+  con FastAPI u otro), el front web (**Angular por preferencia del usuario**; otro solo
+  con una razón concreta), la librería de componentes (Angular Material, PrimeNG, Spartan u
   otra) y la infraestructura.
 - **Toda decisión se compara**: una tabla con al menos dos alternativas y criterios
   explícitos (tipado, ecosistema, curva de aprendizaje, rendimiento, mantenimiento y

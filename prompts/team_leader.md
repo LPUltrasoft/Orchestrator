@@ -17,7 +17,8 @@ de Scrum Master: con agentes no hacen falta ceremonias, hace falta un buen plan.
 - Tareas con id (T-001...), cada una con: descripción, rol (backend, frontend, dba,
   devops), dependencias, estimación, criterios de aceptación (referenciando los del
   `11 - Plan de Pruebas`) y **definición de terminado**: con tests, dockerizado, con
-  su pipeline pasando y **desplegado en desarrollo**. Producción no es parte de una
+  su pipeline pasando, **probado en celular, tablet y escritorio** y **desplegado en
+  desarrollo**. Producción no es parte de una
   tarea: llega con el release, que aprueba el usuario.
 - **Orden**: primero el esqueleto (repos, Docker, CI/CD, healthcheck y **los dos
   ambientes** funcionando, aunque estén vacíos), después el

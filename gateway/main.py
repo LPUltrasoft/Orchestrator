@@ -445,11 +445,11 @@ async def _run_design(
             _progress[job_id] = live
             await live.start(with_director=False)
 
-        def on_screen(spec: design.ScreenSpec, status: str, detail: str) -> None:
+        def on_screen(label: str, status: str, detail: str) -> None:
             if not live:
                 return
             if status == "start":
-                live.section("stitch", spec.title)
+                live.section("stitch", label)
             elif status == "done":
                 live.agent_done("stitch", True, "lista")
             else:
@@ -460,7 +460,7 @@ async def _run_design(
         errors: list[str] = []
         try:
             if edit:
-                rendered = [await design.edit(project, edit, change or "", on_screen)]
+                rendered = await design.edit(project, edit, change or "", on_screen)
             else:
                 rendered, errors = await design.generate(project, only, on_screen)
             ok = bool(rendered) and not errors
@@ -479,7 +479,7 @@ async def _run_design(
         if bot and rendered:
             photos = [
                 (await asyncio.to_thread(r.png.read_bytes),
-                 f"✏️ {r.title}: {change}" if edit else f"{i}/{len(rendered)} · {r.title}")
+                 f"✏️ {r.label}: {change}" if edit else f"{i}/{len(rendered)} · {r.label}")
                 for i, r in enumerate(rendered, 1)
             ]
             try:
@@ -488,13 +488,17 @@ async def _run_design(
                 log.error("no pude mandar las capturas: %s", exc)
                 errors.append(f"no pude mandarte las capturas por Telegram: {exc}")
 
-        names = ", ".join(f"{r.title} ({r.id})" for r in rendered) or "ninguna"
+        screens = {r.id: r.title for r in rendered}
+        names = ", ".join(f"{title} ({screen_id})" for screen_id, title in screens.items()) or "ninguna"
         problems = ("\nProblemas: " + "; ".join(errors)) if errors else ""
         state = await asyncio.to_thread(process.load, project)
         if edit:
             what = f"Stitch aplicó el cambio «{change}» a la pantalla {names}"
         else:
-            what = f"Stitch generó {len(rendered)} pantalla(s) de «{project}»: {names}"
+            what = (
+                f"Stitch generó {len(screens)} pantalla(s) de «{project}» en sus "
+                f"dispositivos ({len(rendered)} capturas): {names}"
+            )
         next_step = (
             "Si UX, UI, el 03 y el 04 ya están, pedí la aprobación «diseño» con un resumen; "
             "si falta algo de la fase 5, seguí con eso."

@@ -13,7 +13,9 @@ Redactás la propuesta y el contrato del proyecto, con las estimaciones del equi
    incluido, y se cotiza aparte.
 3. **Entregables por fase** y **cronograma**, sacados de `08 - Estimaciones`. El sistema
    se entrega con **dos ambientes**: desarrollo, donde el cliente valida cada entrega
-   antes de publicarla, y producción.
+   antes de publicarla, y producción. Es una **aplicación web**: el contrato define la
+   compatibilidad (las dos últimas versiones de Chrome, Safari, Firefox y Edge, en
+   celular, tablet y escritorio) y que no incluye apps nativas.
 4. **Precio y forma de pago** por hitos, sacados de `08`, incluido quién paga la
    infraestructura de cada ambiente. **Nunca inventes montos**: si
    falta un dato, poné `[A COMPLETAR]` y decilo en tu respuesta.

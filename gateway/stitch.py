@@ -144,13 +144,15 @@ class Stitch:
         data = await self.call("list_screens", projectId=project_id)
         return [s["name"] for s in find_resources(data, "screens")]
 
-    async def generate(self, project_id: str, prompt: str, design_system: str | None) -> str:
-        """Genera una pantalla mobile y devuelve su nombre de recurso."""
+    async def generate(
+        self, project_id: str, prompt: str, design_system: str | None, device: str = "MOBILE"
+    ) -> str:
+        """Genera una pantalla para ese dispositivo y devuelve su nombre de recurso."""
         before = set(await self.screen_names(project_id))
         arguments: dict[str, object] = {
             "projectId": project_id,
             "prompt": prompt,
-            "deviceType": "MOBILE",
+            "deviceType": device,
             "modelId": config.STITCH_MODEL,
         }
         if design_system:
@@ -158,7 +160,7 @@ class Stitch:
         data = await self.call("generate_screen_from_text", **arguments)
         return await self._new_screen(project_id, before, data)
 
-    async def edit(self, project_id: str, screen: str, change: str) -> str:
+    async def edit(self, project_id: str, screen: str, change: str, device: str = "MOBILE") -> str:
         """Aplica un cambio a una pantalla. Devuelve la pantalla resultante."""
         before = set(await self.screen_names(project_id))
         data = await self.call(
@@ -166,7 +168,7 @@ class Stitch:
             projectId=project_id,
             selectedScreenIds=[_short(screen)],
             prompt=change,
-            deviceType="MOBILE",
+            deviceType=device,
             modelId=config.STITCH_MODEL,
         )
         try:

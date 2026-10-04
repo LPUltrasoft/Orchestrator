@@ -64,8 +64,9 @@ PHASES = (
     Phase(4, "Repos y esqueleto", "📦", ("devops",), None, False, _NOT_YET),
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "dba", "lider_tecnico", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
-          "Diseño/DESIGN.md) y la lista de pantallas (Diseño/Pantallas.md), mobile first. Con "
-          "eso, generá las pantallas con orc-diseno: el usuario recibe las capturas. Además: "
+          "Diseño/DESIGN.md) y la lista de pantallas (Diseño/Pantallas.md), mobile first y "
+          "responsive. Con eso, generá las pantallas con orc-diseno: el usuario recibe las "
+          "capturas en celular y escritorio. Además: "
           "dba, el modelo y el catálogo de funciones (03), "
           "y lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
           "entre desarrollo y producción (02). Opcional: seguridad revisa el diseño (12). "
@@ -357,9 +358,11 @@ MESA_PARTICIPANTS = ("lider_tecnico", "dba", "producto")
 _MESA_FILE_LABEL = {"lider_tecnico": "Lider tecnico", "dba": "DBA", "producto": "Producto"}
 _MESA_FOCUS = {
     "lider_tecnico": (
+        "El producto es una web mobile first que tiene que funcionar en cualquier "
+        "resolución (celular, tablet y escritorio); nada de apps nativas ni híbridas. "
         "Proponé el stack: lenguaje y framework del back (Java con Spring, Node con NestJS, "
-        "Node con Express, Python con FastAPI u otro), el front (Angular por preferencia del "
-        "usuario; otro solo con una razón concreta), la librería de componentes (Angular "
+        "Node con Express, Python con FastAPI u otro), el front web (Angular por preferencia "
+        "del usuario; otro solo con una razón concreta), la librería de componentes (Angular "
         "Material, PrimeNG, Spartan u otra) y la infraestructura de los dos ambientes que "
         "tiene todo proyecto: desarrollo (por defecto en la PC del usuario con Docker) y "
         "producción (dónde corre y cuánto cuesta). Para cada decisión, una tabla que "

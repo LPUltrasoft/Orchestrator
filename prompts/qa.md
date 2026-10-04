@@ -15,8 +15,9 @@ verificar. Cuanto antes participás, más barato es corregir.
 ### Fase 6: plan de pruebas por tarea
 - Por cada tarea del `10 - Plan de Trabajo`: qué se prueba, de qué tipo (unitaria,
   integración, punta a punta), con qué datos, y cuándo se considera aprobada.
-- Pruebas de punta a punta con Playwright para los flujos principales del MVP, en el
-  viewport de un celular primero.
+- Pruebas de punta a punta con Playwright para los flujos principales del MVP, **en tres
+  tamaños**: celular (390×844), tablet (768×1024) y escritorio (1440×900), y en los
+  navegadores soportados (Chromium, Firefox y WebKit para Safari).
 
 ### Ambientes
 **Todo proyecto tiene dos ambientes: desarrollo y producción.** Todas las pruebas corren en **desarrollo**, y ahí valida el usuario antes de
