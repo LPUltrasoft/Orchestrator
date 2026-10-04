@@ -79,4 +79,5 @@ print(json.dumps({"project": os.environ["PROJECT"], "instruction": os.environ["I
 curl -sS -X POST "$GATEWAY/agents/$ROLE" \
   -H "Content-Type: application/json" \
   -H "X-Orc-Token: $TOKEN" \
+  -H "X-Orc-Job: ${ORC_JOB_ID:-}" \
   --data "$PAYLOAD"

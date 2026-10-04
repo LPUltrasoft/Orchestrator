@@ -97,8 +97,28 @@ Le escribís al bot en lenguaje natural:
 
 > Tengo una idea para automatizar avisos de WhatsApp para turnos médicos
 
-El bot contesta "👀 Tomado", muestra "escribiendo…" mientras el equipo trabaja, y al
-terminar te resume qué quedó escrito en Obsidian y propone el siguiente paso.
+Mientras el equipo trabaja ves **un mensaje de progreso que se edita en vivo**: qué
+agente está activo, sobre qué proyecto, cuánto lleva y qué está haciendo:
+
+```
+⏳ Trabajando… 0:51
+
+⏳ 🧭 Director · 0:51
+   📖 lee 01 - Requerimientos Funcionales y Reglas de …
+   ↪ delega en 📋 Producto
+
+⏳ 📋 Producto · Sistema de Turnos Medicos · 0:25
+   📖 lee 01 - Requerimientos Funcionales y Reglas de …
+   ✏️ edita 01 - Requerimientos Funcionales y Reglas de …
+```
+
+Es un solo mensaje que se edita, así que no llena el chat ni hace sonar el celular. La
+respuesta final llega aparte, como mensaje nuevo, para que sí notifique.
+
+Cómo funciona: `agy` corre con `--output-format stream-json`, que emite un evento por
+cada paso (qué herramienta usa y sobre qué archivo). El orquestador recibe el id del
+trabajo en `ORC_JOB_ID`, `orc-delegate` lo reenvía en el header `X-Orc-Job`, y así los
+pasos de cada sub-agente se suman al mensaje correcto.
 
 | Comando | Qué hace |
 |---------|----------|

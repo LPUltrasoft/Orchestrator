@@ -7,16 +7,13 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
 from . import config, vault
 
 log = logging.getLogger("orchestrator.runner")
-
-# Claves que devuelve agy --output-format json
-JSON_KEYS = ("conversation_id", "status", "response")
-
 
 @contextmanager
 def project_lock(name: str):
@@ -62,16 +59,29 @@ def _check_auth(stdout: str, stderr: str) -> None:
         )
 
 
-def _parse_output(stdout: str) -> dict:
-    """agy imprime una línea JSON; tomamos la última que parsee."""
-    for line in reversed([l for l in stdout.splitlines() if l.strip()]):
+StepCallback = Callable[[dict], None]
+
+
+def _result_from_stream(lines: list[str]) -> dict:
+    """El evento `result` del stream trae lo mismo que --output-format json."""
+    for line in reversed(lines):
         try:
-            data = json.loads(line)
+            event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(data, dict) and any(k in data for k in JSON_KEYS):
-            return data
-    raise RuntimeError(f"agy no devolvió JSON parseable. Salida cruda:\n{stdout[-2000:]}")
+        if isinstance(event, dict) and event.get("event") == "result":
+            return event.get("result") or {}
+    tail = "\n".join(lines)[-2000:]
+    raise RuntimeError(f"agy no devolvió un resultado. Salida cruda:\n{tail}")
+
+
+def _notify_step(on_step: StepCallback | None, step: dict) -> None:
+    if not on_step:
+        return
+    try:
+        on_step(step)
+    except Exception:  # noqa: BLE001 - el progreso es cosmético: nunca tumba un turno
+        log.exception("falló el callback de progreso")
 
 
 async def run_agy(
@@ -84,13 +94,19 @@ async def run_agy(
     timeout: int | None = None,
     denied_retries: int = 2,
     caller: str = "orchestrator",
+    on_step: StepCallback | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict:
-    """Corre agy y devuelve su JSON. No verifica efectos: eso lo hace el caller."""
+    """Corre agy y devuelve su resultado. No verifica efectos: eso lo hace el caller.
+
+    Con --output-format stream-json cada paso del agente (qué archivo lee, cuál
+    escribe) llega a `on_step` en el momento: así se muestra el progreso en vivo.
+    """
     argv = [
         config.AGY_BIN,
         "--print",
         prompt,
-        "--output-format", "json",
+        "--output-format", "stream-json",
         # Sin esto, agy responde como si hubiera usado herramientas pero no las usa.
         "--mode", "accept-edits",
         "--model", model,
@@ -110,42 +126,72 @@ async def run_agy(
     # orc-delegate se niega si no lo llama el orquestador: un sub-agente que
     # delega dispara otro sub-agente, y así sin fin.
     env["ORC_CALLER"] = caller
+    env.update(extra_env or {})
 
     process = await asyncio.create_subprocess_exec(
         *argv,
         cwd=str(cwd),
         env=env,
+        # Sin stdin: si agy pide re-login, que no se quede esperando una respuesta.
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        # El evento final trae la respuesta entera en una sola línea.
+        limit=16 * 1024 * 1024,
     )
+    lines: list[str] = []
+    last_command = ""
+
+    async def pump() -> None:
+        nonlocal last_command
+        async for raw in process.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line:
+                continue
+            lines.append(line)
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # texto suelto, como el pedido de login
+            step = event.get("step_update") if isinstance(event, dict) else None
+            if not step:
+                continue
+            if step.get("tool_name") == "run_command":
+                params = (step.get("tool_info") or {}).get("parameters") or {}
+                last_command = params.get("CommandLine", "") or last_command
+            _notify_step(on_step, step)
+
+    stderr_task = asyncio.create_task(process.stderr.read())
     try:
-        raw_out, raw_err = await asyncio.wait_for(
-            process.communicate(), timeout=timeout or config.JOB_TIMEOUT
-        )
+        await asyncio.wait_for(pump(), timeout=timeout or config.JOB_TIMEOUT)
+        await process.wait()
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
+        stderr_task.cancel()
         raise RuntimeError(
             f"agy superó el timeout de {timeout or config.JOB_TIMEOUT}s y fue cancelado"
         )
 
-    stdout = raw_out.decode("utf-8", "replace")
-    stderr = raw_err.decode("utf-8", "replace")
+    stderr = (await stderr_task).decode("utf-8", "replace")
+    stdout = "\n".join(lines)
     _check_auth(stdout, stderr)
-    if process.returncode != 0 and not stdout.strip():
+    if process.returncode != 0 and not lines:
         raise RuntimeError(f"agy salió con código {process.returncode}: {stderr[-2000:]}")
 
-    data = _parse_output(stdout)
+    data = _result_from_stream(lines)
 
     # En headless, un tool sin allow-rule se auto-deniega y la respuesta vuelve vacía.
     denied = data.get("denied_actions") or []
     if denied and not (data.get("response") or "").strip():
         names = ", ".join(d.get("display_name") or d.get("action", "?") for d in denied)
+        detail = f"{names} (`{last_command}`)" if last_command else names
         # Cada pregunta nueva lleva al modelo a otro comando shell (find, wc, stat...):
         # agrandar la allowlist cada vez no termina nunca, y algunos (find -delete,
         # find -exec) no son seguros. Mejor reanudar la conversación y reencauzarlo.
         if denied_retries > 0 and data.get("conversation_id"):
-            log.warning("agy denegó %s; reanudo la conversación con una indicación", names)
+            log.warning("agy denegó %s; reanudo la conversación con una indicación", detail)
+            _notify_step(on_step, {"synthetic": "retry", "detail": last_command or names})
             return await run_agy(
                 prompt=DENIED_RETRY_PROMPT,
                 model=model,
@@ -155,12 +201,13 @@ async def run_agy(
                 timeout=timeout,
                 denied_retries=denied_retries - 1,
                 caller=caller,
+                on_step=on_step,
+                extra_env=extra_env,
             )
         raise RuntimeError(
-            f"agy denegó herramientas por falta de permisos en headless: {names}. "
+            f"agy denegó herramientas por falta de permisos en headless: {detail}. "
             f"Agregá la allow-rule correspondiente en "
-            f"~/.gemini/antigravity-cli/settings.json (permissions.allow), "
-            f"por ejemplo command(orc-delegate)."
+            f"~/.gemini/antigravity-cli/settings.json (permissions.allow)."
         )
 
     # Respuesta vacía con usage en cero = el turno nunca corrió de verdad.
@@ -208,7 +255,9 @@ para qué). Es lo único que va a leer el Director de Proyecto.
 """
 
 
-async def invoke_subagent(role: str, project: str, instruction: str) -> dict:
+async def invoke_subagent(
+    role: str, project: str, instruction: str, on_step: StepCallback | None = None
+) -> dict:
     """Corre un sub-agente y verifica con git lo que realmente cambió."""
     if role not in config.ROLES:
         raise ValueError(f"rol desconocido: {role}. Válidos: {', '.join(config.ROLES)}")
@@ -221,6 +270,7 @@ async def invoke_subagent(role: str, project: str, instruction: str) -> dict:
             model=config.MODELS[role],
             cwd=project_path,
             caller=role,
+            on_step=on_step,
         )
         # git bloquea: fuera del event loop para no frenar las demás requests.
         files_changed = await asyncio.to_thread(vault.changed_since, before)

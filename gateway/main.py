@@ -14,7 +14,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, jobs, runner, sessions, telegram, vault
+from . import config, jobs, progress, runner, sessions, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -47,6 +47,9 @@ _chat_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 # Turnos lanzados y no terminados por chat. Mirar el lock no alcanza: dos mensajes
 # seguidos llegan antes de que la primera tarea alcance a tomarlo.
 _pending: defaultdict[str, int] = defaultdict(int)
+# Mensaje de progreso de cada trabajo en curso. Los sub-agentes llegan a /agents con
+# el job_id (header X-Orc-Job), y así sus pasos se suman al mensaje correcto.
+_progress: dict[str, progress.Progress] = {}
 
 
 class ChatIn(BaseModel):
@@ -128,6 +131,11 @@ async def _keep_typing(chat_id: str) -> None:
 async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
     async with _chat_locks[body.chat_id]:
         typing = asyncio.create_task(_keep_typing(body.chat_id)) if bot else None
+        live = progress.Progress(bot, body.chat_id) if bot else None
+        ok = False
+        if live:
+            _progress[job_id] = live
+            await live.start()
         try:
             if sessions.should_recycle(body.chat_id):
                 log.info("chat %s alcanzó el máximo de turnos: reciclo conversación", body.chat_id)
@@ -139,6 +147,8 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
                 model=config.MODELS["orchestrator"],
                 cwd=config.VAULT_PATH,
                 conversation_id=conversation_id,
+                on_step=(lambda step: live.step("orchestrator", step)) if live else None,
+                extra_env={"ORC_JOB_ID": job_id},
             )
             if result.get("conversation_id"):
                 sessions.remember(body.chat_id, result["conversation_id"])
@@ -147,6 +157,7 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
             if result.get("status") != "SUCCESS":
                 reply = f"⚠️ El turno terminó con status={result.get('status')}, puede estar incompleto.\n\n{reply}"
             jobs.finish(job_id, result={"response": reply, "usage": result.get("usage", {})})
+            ok = result.get("status") == "SUCCESS"
         except Exception as exc:  # noqa: BLE001 - el job nunca debe morir en silencio
             log.exception("job %s falló", job_id)
             jobs.finish(job_id, error=str(exc))
@@ -154,6 +165,9 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
         finally:
             if typing:
                 typing.cancel()
+            if live:
+                await live.finish(ok)
+                _progress.pop(job_id, None)
         await _notify(body.chat_id, reply, job_id)
 
 
@@ -208,11 +222,10 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
             await bot.send(chat_id, f"En curso ({len(running)}):\n{lines}")
     else:
         _, queued = _start_job(ChatIn(chat_id=chat_id, text=text, from_name=from_name))
-        await bot.send(
-            chat_id,
-            "📥 Lo anoto: termino lo anterior y sigo con esto." if queued
-            else "👀 Tomado. El equipo está trabajando, te aviso cuando termine.",
-        )
+        if queued:
+            # Si no está en cola, el mensaje de progreso que aparece al arrancar ya
+            # hace de acuse.
+            await bot.send(chat_id, "📥 Lo anoto: termino lo anterior y sigo con esto.")
 
 
 # ── Ciclo de vida ────────────────────────────────────────────────────────────
@@ -306,16 +319,32 @@ async def chat(body: ChatIn) -> dict:
 
 
 @app.post("/agents/{role}", dependencies=[Depends(auth)])
-async def delegate(role: str, body: DelegateIn) -> dict:
+async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default="")) -> dict:
     """Invocación síncrona de un sub-agente. La usa `orc-delegate`."""
     if role not in config.ROLES:
         raise HTTPException(404, f"rol desconocido: {role}. Válidos: {', '.join(config.ROLES)}")
+    live = _progress.get(x_orc_job)
+    if live:
+        live.section(role, body.project)
     try:
-        return await runner.invoke_subagent(role, body.project, body.instruction)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+        result = await runner.invoke_subagent(
+            role, body.project, body.instruction,
+            on_step=(lambda step: live.step(role, step)) if live else None,
+        )
+    except (ValueError, RuntimeError) as exc:
+        if live:
+            live.agent_done(role, False, f"⚠️ {str(exc)[:120]}")
+        code = 400 if isinstance(exc, ValueError) else 409
+        raise HTTPException(code, str(exc)) from exc
+    if live:
+        files = result.get("files_changed") or []
+        live.agent_done(
+            role, True,
+            f"escribió {len(files)} archivo{'s' if len(files) != 1 else ''}"
+            + (f" · commit {result['commit']}" if result.get("commit") else "")
+            if files else "no escribió archivos",
+        )
+    return result
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(auth)])
