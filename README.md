@@ -252,14 +252,21 @@ no estaba permitido):
 
 ```
 claude -p --output-format stream-json --verbose --model <modelo> --effort <nivel>
-  --safe-mode --setting-sources project --strict-mcp-config
+  --restricted --strict-mcp-config --disable-slash-commands
   --permission-mode dontAsk --tools Read,Write,Edit,Glob,Grep
-  --add-dir <vault> --allowedTools "Read(/<vault>/**)" "Edit(/<proyecto>/**)"
+  --add-dir <vault> --allowedTools "Read(/<vault>/**)" "Edit(/<proyecto>/**)" [mcp__…]
+  [--safe-mode | --mcp-config '{"mcpServers": {…}}']
 ```
 
+- `--restricted` ignora todos los settings, también los que un agente plantara en la
+  carpeta del proyecto, y no deja escribir archivos de configuración.
 - Sin Bash: un rol de Claude no ejecuta comandos ni puede delegar.
 - Lee todo el vault y escribe **solo en la carpeta del proyecto** (verificado: leer fuera
   del vault y escribir fuera del proyecto se deniega).
+- **MCP por rol**: solo los de `MCP_SERVERS` en `config.py`, con sus herramientas
+  permitidas de a una. Hoy, **Context7** (documentación actual de librerías, solo
+  lectura) para `lider_tecnico` y `dba`. Se cambia con `MCP_<ROL>` en el `.env`. Los
+  roles sin MCP suman `--safe-mode`, que apagaría también los MCP elegidos.
 - El prompt va por stdin y la memoria del rol se retoma con `--resume <session_id>`.
 - `--bare` no sirve: pide API key y la suscripción entra por OAuth.
 

@@ -79,6 +79,9 @@ def describe(step: dict) -> str | None:
         return _describe_command((params.get("CommandLine") or "").strip())
     if tool in ("search_web", "read_url_content"):
         return "🌐 consulta la web"
+    if tool.startswith("mcp__context7__"):
+        topic = params.get("libraryName") or params.get("query") or ""
+        return f"📚 consulta la documentación{f' de «{topic[:30]}»' if topic else ''}"
     return f"🔧 {tool}"
 
 

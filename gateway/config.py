@@ -84,6 +84,22 @@ MODELS = {r: os.environ.get(f"MODEL_{r.upper()}", m) for r, (_, m, _) in _DEFAUL
 EFFORTS = {r: os.environ.get(f"EFFORT_{r.upper()}", f) or None for r, (_, _, f) in _DEFAULT_AGENTS.items()}
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
 
+# MCP que puede usar cada rol de Claude: solo estos, los del usuario no se cargan nunca.
+# Cada uno declara las herramientas que se le permiten, de a una. Se cambia con
+# MCP_<ROL>=context7 en el .env (vacío = ninguno).
+MCP_SERVERS = {
+    # Documentación actual de librerías y frameworks (context7.com). Solo lectura, sin cuenta.
+    "context7": {
+        "config": {"type": "http", "url": "https://mcp.context7.com/mcp"},
+        "tools": ("resolve-library-id", "query-docs"),
+    },
+}
+_DEFAULT_MCPS = {"lider_tecnico": "context7", "dba": "context7"}
+MCPS = {
+    r: tuple(m.strip() for m in os.environ.get(f"MCP_{r.upper()}", _DEFAULT_MCPS.get(r, "")).split(",") if m.strip())
+    for r in _DEFAULT_AGENTS
+}
+
 ROLES = tuple(role for role in MODELS if role != "orchestrator")
 
 # Modelos que agy ofrece hoy. Se llena al arrancar: Antigravity retira modelos sin
@@ -132,6 +148,12 @@ def validate() -> list[str]:
     for role, engine in ENGINES.items():
         if engine not in ("agy", "claude"):
             problems.append(f"motor desconocido para '{role}': {engine} (agy o claude)")
+    for role, servers in MCPS.items():
+        for server in servers:
+            if server not in MCP_SERVERS:
+                problems.append(f"MCP desconocido para '{role}': {server}")
+        if servers and ENGINES[role] != "claude":
+            problems.append(f"'{role}' tiene MCP pero corre con {ENGINES[role]}: solo los roles de Claude los usan")
     if any(e == "claude" for e in ENGINES.values()) and not shutil.which(CLAUDE_BIN):
         problems.append(f"hay roles con Claude pero no encuentro el CLI: {CLAUDE_BIN}")
     if KNOWN_MODELS:

@@ -255,7 +255,8 @@ _CLAUDE_AS_AGY = {
 
 def _claude_step(tool: str, arguments: dict) -> dict:
     name, param, source = _CLAUDE_AS_AGY.get(tool, (tool, "", ""))
-    params = {param: arguments.get(source, "")} if param else {}
+    # Las herramientas sin equivalente en agy (las de los MCP) pasan sus argumentos tal cual.
+    params = {param: arguments.get(source, "")} if param else dict(arguments)
     return {"step_type": "tool", "state": "ACTIVE", "tool_name": name,
             "tool_info": {"name": name, "parameters": params}}
 
@@ -294,25 +295,36 @@ async def run_claude(
     timeout: int | None = None,
     denied_retries: int = 2,
     on_step: StepCallback | None = None,
+    mcps: tuple[str, ...] = (),
 ) -> dict:
     """Corre un agente con el CLI de Claude Code, aislado de la configuración personal
     del usuario, y devuelve su resultado con el mismo formato que run_agy."""
+    servers = {name: config.MCP_SERVERS[name] for name in mcps}
     argv = [
         config.CLAUDE_BIN, "-p",
         "--output-format", "stream-json", "--verbose",
         "--model", model,
-        # Sin esto, el agente hereda los permisos, hooks, plugins y MCP del usuario: en
-        # la primera prueba, un `ls` corrió aunque Bash no estaba permitido.
-        "--safe-mode", "--setting-sources", "project", "--strict-mcp-config",
+        # Sin aislar, el agente hereda los permisos, hooks, plugins y MCP del usuario: en
+        # la primera prueba, un `ls` corrió aunque Bash no estaba permitido. --restricted
+        # ignora todos los settings (también los que un agente plantara en la carpeta del
+        # proyecto) y no deja escribir archivos de configuración.
+        "--restricted", "--strict-mcp-config", "--disable-slash-commands",
         "--permission-mode", "dontAsk",
         "--tools", CLAUDE_TOOLS,
         "--add-dir", str(config.VAULT_PATH),
         # --tools dice qué herramientas existen, no les da permiso: en dontAsk todo lo
         # no permitido se deniega, incluso escribir en la propia carpeta. Los permisos van
-        # acotados: leer solo el vault, escribir solo en la carpeta del proyecto.
-        # ("//" = ruta absoluta en las reglas de Claude Code.)
+        # acotados: leer solo el vault, escribir solo en la carpeta del proyecto, y las
+        # herramientas de sus MCP de a una. ("//" = ruta absoluta en las reglas.)
         "--allowedTools", f"Read(/{config.VAULT_PATH.resolve()}/**)", f"Edit(/{cwd.resolve()}/**)",
+        *(f"mcp__{name}__{tool}" for name, server in servers.items() for tool in server["tools"]),
     ]
+    if servers:
+        argv += ["--mcp-config", json.dumps({"mcpServers": {n: s["config"] for n, s in servers.items()}})]
+    else:
+        # --safe-mode apaga plugins, skills, hooks y CLAUDE.md, pero también los MCP
+        # elegidos con --mcp-config: solo se puede usar en los roles sin MCP.
+        argv.append("--safe-mode")
     if effort:
         argv += ["--effort", effort]
     if session_id:
@@ -379,7 +391,7 @@ async def run_claude(
             return await run_claude(
                 prompt=DENIED_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
                 session_id=data["conversation_id"], timeout=timeout,
-                denied_retries=denied_retries - 1, on_step=on_step,
+                denied_retries=denied_retries - 1, on_step=on_step, mcps=mcps,
             )
         raise RuntimeError(f"claude denegó herramientas: {detail}")
     if data["status"] != "SUCCESS" and not data["response"].strip():
@@ -389,10 +401,19 @@ async def run_claude(
 
 def _tools_note(role: str) -> str:
     if config.ENGINES[role] == "claude":
-        return (
-            "Tenés `Read`, `Write`, `Edit`, `Glob` y `Grep`, y nada más: no hay shell. Con "
+        note = (
+            "Tenés `Read`, `Write`, `Edit`, `Glob` y `Grep`: no hay shell. Con "
             "`Read` también podés mirar imágenes (por ejemplo, capturas de pantallas)."
         )
+        if "context7" in config.MCPS[role]:
+            note += (
+                "\n\nTambién tenés **Context7** (`resolve-library-id` y después `query-docs`): "
+                "la documentación actual de librerías y frameworks. Consultalo antes de afirmar "
+                "versiones, APIs o configuraciones de una librería (por ejemplo, en un ADR), y "
+                "citá la versión que consultaste. Lo que mandás ahí sale de la PC: nunca "
+                "incluyas datos del proyecto, solo la pregunta técnica."
+            )
+        return note
     return (
         "Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,\n"
         "`grep_search`, `find_by_name`, `write_to_file` y `replace_file_content`. **No uses\n"
@@ -472,7 +493,7 @@ async def invoke_subagent(
         if config.ENGINES[role] == "claude":
             result = await run_claude(
                 prompt=prompt, model=config.MODELS[role], effort=config.EFFORTS[role],
-                cwd=project_path, on_step=on_step,
+                cwd=project_path, on_step=on_step, mcps=config.MCPS[role],
             )
         else:
             result = await run_agy(
