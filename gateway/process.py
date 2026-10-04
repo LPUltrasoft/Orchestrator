@@ -76,7 +76,7 @@ PHASES = (
     Phase(6, "Planificación", "📌", ("team_leader", "qa"), "plan", True,
           "Delegá en team_leader el plan de trabajo (10) y en qa el plan de pruebas por tarea "
           "(11). Pedí la aprobación «plan»."),
-    Phase(7, "Desarrollo", "⚙️", ("nestjs",), None, False, _NOT_YET),
+    Phase(7, "Desarrollo", "⚙️", ("backend", "frontend"), None, False, _NOT_YET),
     Phase(8, "Release", "🚦", ("qa", "seguridad", "legal"), "release", False, _NOT_YET),
     Phase(9, "Operación", "📈", ("devops",), None, False, _NOT_YET),
 )

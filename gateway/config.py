@@ -76,7 +76,8 @@ _DEFAULT_AGENTS = {
     "dba":            ("claude", "claude-opus-5-5",       "high"),
     "team_leader":    ("claude", "claude-opus-5-5",       "high"),
     "seguridad":      ("claude", "claude-opus-5-5",       "high"),
-    "nestjs":         ("claude", "claude-opus-5-5",       "medium"),
+    "backend":        ("claude", "claude-opus-5-5",       "medium"),
+    "frontend":       ("claude", "claude-opus-5-5",       "medium"),
 }
 ENGINES = {r: os.environ.get(f"ENGINE_{r.upper()}", e) for r, (e, _, _) in _DEFAULT_AGENTS.items()}
 MODELS = {r: os.environ.get(f"MODEL_{r.upper()}", m) for r, (_, m, _) in _DEFAULT_AGENTS.items()}

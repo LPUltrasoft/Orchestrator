@@ -33,8 +33,10 @@ SHUTDOWN_GRACE = 280
 TYPING_EVERY = 4.5
 
 HELP_TEXT = (
-    "Soy el Director de Proyecto. Contame qué querés construir y lo reparto entre el "
-    "equipo: Producto, DBA y NestJS. Todo queda documentado en tu vault de Obsidian.\n\n"
+    "Soy el Director de Proyecto. Contame qué querés construir y lo llevo por el proceso "
+    "con el equipo: Producto, QA, Líder técnico, DBA, Legal, Team leader, UX, UI, "
+    "Revisor UX/UI, Seguridad y los desarrolladores de back y front. Todo queda "
+    "documentado en tu vault de Obsidian.\n\n"
     "Comandos:\n"
     "/reset: empezar una conversación nueva (olvido el contexto anterior)\n"
     "/estado: qué está haciendo el equipo ahora\n"

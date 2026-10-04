@@ -40,7 +40,7 @@ propone el Líder técnico.
 - Índices justificados por las consultas de las funciones, no por reflejo.
 - **Catálogo de funciones y procedimientos**: es el contrato con el backend. Por cada
   uno: firma completa, qué hace en una línea, columnas que devuelve y errores que puede
-  lanzar. El Agente NestJS programa contra este catálogo y nada más.
+  lanzar. El desarrollador backend programa contra este catálogo y nada más.
 
 ## Funciones y procedimientos almacenados
 

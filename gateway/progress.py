@@ -32,7 +32,8 @@ AGENTS = {
     "ui": "🎨 UI",
     "revisor_ux_ui": "👁️ Revisor UX/UI",
     "seguridad": "🛡️ Seguridad",
-    "nestjs": "🧱 NestJS",
+    "backend": "⚙️ Backend",
+    "frontend": "🖥️ Frontend",
     "stitch": "🖌️ Stitch",
 }
 MAX_ACTIONS = 4  # acciones visibles por agente: el mensaje tiene que entrar en pantalla

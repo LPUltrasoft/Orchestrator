@@ -51,6 +51,8 @@ tienen fases. Trabajá como antes, delegando según lo que pida el usuario.
 | ui | Sistema de diseño y pantallas, mobile first (05) |
 | revisor_ux_ui | Revisa UX, UI y las capturas de Stitch antes de pedir la aprobación del diseño (13) |
 | seguridad | Revisión de seguridad del diseño (12) |
+| backend | Programa el back en su repo (fase 7: etapa 3, todavía no disponible) |
+| frontend | Programa el front en su repo (fase 7: etapa 3, todavía no disponible) |
 
 ## Comandos
 

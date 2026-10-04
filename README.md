@@ -177,7 +177,8 @@ trabajan sin fases.
 | `ui` | 05 sección UI, `Diseño/DESIGN.md` y `Pantallas.md` | agy | `gemini-3.1-pro-high` | — |
 | `revisor_ux_ui` | 13 revisión de UX, UI y capturas | claude | `claude-sonnet-5-5` | medium |
 | `qa` | 11 plan de pruebas | claude | `claude-opus-5-5` | medium |
-| `nestjs` | Desarrollo backend (etapa 3) | claude | `claude-opus-5-5` | medium |
+| `backend` | Código del back en su repo (etapa 3) | claude | `claude-opus-5-5` | medium |
+| `frontend` | Código del front en su repo (etapa 3) | claude | `claude-opus-5-5` | medium |
 | `lider_tecnico` | ADRs, 02 arquitectura, 04 API (OpenAPI) | claude | `claude-opus-5-5` | high |
 | `dba` | 03 modelo y funciones almacenadas | claude | `claude-opus-5-5` | high |
 | `team_leader` | 08 estimaciones, 10 plan de trabajo | claude | `claude-opus-5-5` | high |
