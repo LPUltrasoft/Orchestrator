@@ -39,6 +39,25 @@ _JSON_BLOCK = re.compile(r"```json\s*(\[.*?\])\s*```", re.S)
 # responsive del DESIGN.md y se genera solo si se pide (cada versión es una generación).
 DEFAULT_DEVICES = ("MOBILE", "DESKTOP")
 DEVICE_LABEL = {"MOBILE": "celular", "TABLET": "tablet", "DESKTOP": "escritorio"}
+# Se agregan a cada prompt. En la primera prueba real, una pantalla pedida para MOBILE
+# salió con layout de escritorio (deviceType describe "el dispositivo que capturó la
+# pantalla", no el formato de salida), con textos en inglés y con secciones que nadie
+# pidió: el dispositivo y las reglas van explícitos en el texto.
+_DEVICE_HINT = {
+    "MOBILE": "Diseñala para la pantalla de un celular de 390 px de ancho, en una sola columna.",
+    "TABLET": "Diseñala para la pantalla de una tablet de 768 px de ancho.",
+    "DESKTOP": "Diseñala para una pantalla de escritorio de 1440 px de ancho.",
+}
+_ALWAYS = (
+    "Todos los textos visibles de la interfaz en español rioplatense. Mostrá solo lo que "
+    "se describe: no agregues secciones, datos ni funciones que no estén pedidos."
+)
+
+
+def prompt_for(prompt: str, device: str) -> str:
+    return f"{prompt}\n\n{_DEVICE_HINT[device]} {_ALWAYS}"
+
+
 _DEVICE_ALIASES = {
     "mobile": "MOBILE", "movil": "MOBILE", "móvil": "MOBILE", "celular": "MOBILE",
     "tablet": "TABLET",
@@ -237,7 +256,8 @@ async def generate(
                 notify(label, "start", "")
                 try:
                     screen = await client.generate(
-                        state["project_id"], spec.prompt, state.get("design_system"), device
+                        state["project_id"], prompt_for(spec.prompt, device),
+                        state.get("design_system"), device,
                     )
                     png, html = await client.files(screen)
                 except stitch.StitchError as exc:
@@ -279,7 +299,10 @@ async def edit(
             label = f"{entry['titulo']} · {DEVICE_LABEL[device]}"
             notify(label, "start", "")
             try:
-                screen = await client.edit(state["project_id"], version["screen"], change, device)
+                screen = await client.edit(
+                    state["project_id"], version["screen"],
+                    f"{change}\n\n{_DEVICE_HINT[device]} {_ALWAYS}", device,
+                )
                 png, html = await client.files(screen)
             except stitch.StitchError as exc:
                 notify(label, "error", str(exc))

@@ -198,8 +198,10 @@ class Stitch:
         return image, code
 
     async def _download(self, url: str, image: bool = False) -> bytes:
-        # Las imágenes son URLs base de FIFE: con "=s0" se pide el tamaño original.
-        candidates = [url, f"{url}=s0"] if image and "=" not in url.rsplit("/", 1)[-1] else [url]
+        # Las capturas son URLs base de FIFE (lh3.googleusercontent.com). Sin sufijo
+        # devuelven una miniatura de 512 px; con "=s0", el tamaño original (verificado:
+        # 780x1768 en celular y 2560x2048 en escritorio).
+        candidates = [f"{url}=s0", url] if image and "=" not in url.rsplit("/", 1)[-1] else [url]
         last = ""
         for candidate in candidates:
             for headers in ({}, {"X-Goog-Api-Key": self._key}):
