@@ -75,6 +75,23 @@ def _result_from_stream(lines: list[str]) -> dict:
     raise RuntimeError(f"agy no devolvió un resultado. Salida cruda:\n{tail}")
 
 
+def _denied_detail(denied: list[dict], last_by_tool: dict[str, dict]) -> str:
+    """Qué se denegó y sobre qué. 'RunCommand' no es la única: también 'ViewFile' de
+    un archivo fuera del vault. Mostrar siempre el último comando confundía."""
+    parts = []
+    for item in denied:
+        name = item.get("display_name") or item.get("action", "?")
+        tool = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()  # ViewFile -> view_file
+        params = last_by_tool.get(tool) or {}
+        target = next(
+            (params[k] for k in ("CommandLine", "AbsolutePath", "TargetFile", "DirectoryPath")
+             if params.get(k)),
+            "",
+        )
+        parts.append(f"{name} ({target[:150]})" if target else name)
+    return ", ".join(parts)
+
+
 def _notify_step(on_step: StepCallback | None, step: dict) -> None:
     if not on_step:
         return
@@ -140,10 +157,9 @@ async def run_agy(
         limit=16 * 1024 * 1024,
     )
     lines: list[str] = []
-    last_command = ""
+    last_by_tool: dict[str, dict] = {}
 
     async def pump() -> None:
-        nonlocal last_command
         async for raw in process.stdout:
             line = raw.decode("utf-8", "replace").strip()
             if not line:
@@ -156,9 +172,9 @@ async def run_agy(
             step = event.get("step_update") if isinstance(event, dict) else None
             if not step:
                 continue
-            if step.get("tool_name") == "run_command":
+            if step.get("step_type") == "tool" and step.get("tool_name"):
                 params = (step.get("tool_info") or {}).get("parameters") or {}
-                last_command = params.get("CommandLine", "") or last_command
+                last_by_tool[step["tool_name"]] = params
             _notify_step(on_step, step)
 
     stderr_task = asyncio.create_task(process.stderr.read())
@@ -184,14 +200,13 @@ async def run_agy(
     # En headless, un tool sin allow-rule se auto-deniega y la respuesta vuelve vacía.
     denied = data.get("denied_actions") or []
     if denied and not (data.get("response") or "").strip():
-        names = ", ".join(d.get("display_name") or d.get("action", "?") for d in denied)
-        detail = f"{names} (`{last_command}`)" if last_command else names
+        detail = _denied_detail(denied, last_by_tool)
         # Cada pregunta nueva lleva al modelo a otro comando shell (find, wc, stat...):
         # agrandar la allowlist cada vez no termina nunca, y algunos (find -delete,
         # find -exec) no son seguros. Mejor reanudar la conversación y reencauzarlo.
         if denied_retries > 0 and data.get("conversation_id"):
             log.warning("agy denegó %s; reanudo la conversación con una indicación", detail)
-            _notify_step(on_step, {"synthetic": "retry", "detail": last_command or names})
+            _notify_step(on_step, {"synthetic": "retry", "detail": detail})
             return await run_agy(
                 prompt=DENIED_RETRY_PROMPT,
                 model=model,

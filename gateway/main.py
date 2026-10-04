@@ -6,15 +6,18 @@ pruebas y para la alternativa con n8n.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, jobs, progress, runner, sessions, telegram, vault
+from . import config, jobs, progress, quota, runner, sessions, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -50,6 +53,12 @@ _pending: defaultdict[str, int] = defaultdict(int)
 # Mensaje de progreso de cada trabajo en curso. Los sub-agentes llegan a /agents con
 # el job_id (header X-Orc-Job), y así sus pasos se suman al mensaje correcto.
 _progress: dict[str, progress.Progress] = {}
+# Pedidos pausados por cuota, persistidos: sobreviven a un reinicio mientras esperan.
+_PAUSED_FILE = config.STATE_DIR / "paused.json"
+_resumers: set[asyncio.Task] = set()
+# Delegaciones rechazadas por cuota a mitad de un turno, por job_id: al terminar ese
+# turno se agenda la continuación.
+_paused_delegations: dict[str, dict] = {}
 
 
 class ChatIn(BaseModel):
@@ -128,8 +137,104 @@ async def _keep_typing(chat_id: str) -> None:
         await asyncio.sleep(TYPING_EVERY)
 
 
+def _load_paused() -> list[dict]:
+    try:
+        return json.loads(_PAUSED_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def _save_paused(entries: list[dict]) -> None:
+    tmp = _PAUSED_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_PAUSED_FILE)
+
+
+def _short(text: str, limit: int = 70) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+async def _pause(
+    chat_id: str,
+    text: str,
+    from_name: str | None,
+    low: list[quota.Window],
+    label: str | None = None,
+) -> None:
+    """Guarda el pedido para cuando se renueve la cuota y avisa."""
+    until = quota.resume_at(low)
+    entries = _load_paused()
+    already = any(e["chat_id"] == chat_id for e in entries)
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "chat_id": chat_id,
+        "text": text,
+        "from_name": from_name,
+        "resume_at": until.isoformat(),
+        # Lo que ve el usuario en los avisos; el texto puede ser una instrucción interna.
+        "label": label,
+    }
+    _save_paused([*entries, entry])
+    log.warning("pausa por cuota para el chat %s hasta %s", chat_id, until.isoformat())
+    if already:
+        notice = f"📥 Lo anoto: estamos en pausa por cuota hasta {quota.when(until)}."
+    else:
+        used = 100 - min(w.remaining for w in low)
+        notice = (
+            f"⏸️ Pausé el trabajo: se usó el {used}% de {quota.describe(low)}. "
+            f"Se renueva {quota.when(until)}; ahí retomo solo y te aviso."
+        )
+    await _notify(chat_id, notice, "cuota")
+    _schedule_resume(entry)
+
+
+def _schedule_resume(entry: dict) -> None:
+    task = asyncio.create_task(_resume_later(entry))
+    _resumers.add(task)
+    task.add_done_callback(_resumers.discard)
+
+
+async def _resume_later(entry: dict) -> None:
+    until = datetime.fromisoformat(entry["resume_at"])
+    delay = (until - datetime.now(timezone.utc)).total_seconds() + config.QUOTA_RESUME_BUFFER
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    # El primero que despierta retoma todos los pedidos vencidos de ese chat, en el
+    # orden en que llegaron. Si cada uno se retomara solo, competirían y el segundo
+    # mensaje podría correr antes que el primero (pasó en las pruebas).
+    now = datetime.now(timezone.utc)
+    entries = _load_paused()
+    due = [
+        e for e in entries
+        if e["chat_id"] == entry["chat_id"] and datetime.fromisoformat(e["resume_at"]) <= now
+    ]
+    if not any(e["id"] == entry["id"] for e in due):
+        return  # ya lo retomó otro temporizador
+    due_ids = {e["id"] for e in due}
+    _save_paused([e for e in entries if e["id"] not in due_ids])
+    log.info("se renovó la cuota: retomo %d pedido(s) del chat %s", len(due), entry["chat_id"])
+
+    listing = "\n".join(f"- {e.get('label') or _short(e['text'])}" for e in due)
+    await _notify(
+        entry["chat_id"],
+        f"▶️ Se renovó la cuota. Retomo {'este pedido' if len(due) == 1 else f'{len(due)} pedidos, en orden'}:\n{listing}",
+        "cuota",
+    )
+    # _start_job es síncrono y el lock por chat es FIFO: se ejecutan en este orden.
+    for e in due:
+        _start_job(ChatIn(chat_id=e["chat_id"], text=e["text"], from_name=e.get("from_name")))
+
+
 async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
     async with _chat_locks[body.chat_id]:
+        # Antes de gastar nada: si la cuota no alcanza, el pedido espera la renovación.
+        low = await quota.exhausted(list(config.MODELS.values()), force=True)
+        if low:
+            await _pause(body.chat_id, body.text, body.from_name, low)
+            jobs.finish(job_id, result={"paused_until": quota.resume_at(low).isoformat()})
+            return
         typing = asyncio.create_task(_keep_typing(body.chat_id)) if bot else None
         live = progress.Progress(bot, body.chat_id) if bot else None
         ok = False
@@ -169,6 +274,20 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
                 await live.finish(ok)
                 _progress.pop(job_id, None)
         await _notify(body.chat_id, reply, job_id)
+
+        # Si a mitad del turno se rechazó una delegación por cuota, se agenda la
+        # continuación: el orquestador retoma con su contexto (misma conversación).
+        paused = _paused_delegations.pop(job_id, None)
+        if paused:
+            await _pause(
+                body.chat_id,
+                "(Mensaje del sistema) Se renovó la cuota. Retomá la tarea que quedó en "
+                f"pausa: delegá en {paused['role']} sobre el proyecto «{paused['project']}» "
+                f"con esta instrucción:\n\n{paused['instruction']}",
+                body.from_name,
+                paused["windows"],
+                label=f"continuar: {paused['role']} en «{paused['project']}»",
+            )
 
 
 def _start_job(body: ChatIn) -> tuple[str, bool]:
@@ -215,11 +334,23 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
         await bot.send(chat_id, "Listo, arrancamos una conversación nueva.")
     elif command == "/estado":
         running = _running_for(chat_id)
-        if not running:
-            await bot.send(chat_id, "No hay nada en curso.")
-        else:
-            lines = "\n".join(f"- desde {j['created_at'][11:16]} UTC: {j['payload']['text'][:80]}" for j in running)
+        paused = [e for e in _load_paused() if e["chat_id"] == chat_id]
+        if paused:
+            lines = "\n".join(
+                f"- {e.get('label') or _short(e['text'])} "
+                f"(retomo {quota.when(datetime.fromisoformat(e['resume_at']))})"
+                for e in paused
+            )
+            await bot.send(chat_id, f"⏸️ En pausa por cuota ({len(paused)}):\n{lines}")
+        if running:
+            lines = "\n".join(
+                f"- desde las {datetime.fromisoformat(j['created_at']).astimezone():%H:%M}: "
+                f"{_short(j['payload']['text'])}"
+                for j in running
+            )
             await bot.send(chat_id, f"En curso ({len(running)}):\n{lines}")
+        if not running and not paused:
+            await bot.send(chat_id, "No hay nada en curso.")
     else:
         _, queued = _start_job(ChatIn(chat_id=chat_id, text=text, from_name=from_name))
         if queued:
@@ -260,6 +391,10 @@ async def lifespan(_: FastAPI):
         log.error("CONFIG: %s", problem)
     log.info("gateway listo · vault=%s · proyectos=%s", config.VAULT_PATH, vault.list_projects())
 
+    for entry in _load_paused():
+        log.info("pausa guardada: retomo %s %s", entry["id"], quota.when(datetime.fromisoformat(entry["resume_at"])))
+        _schedule_resume(entry)
+
     poller = None
     if config.TELEGRAM_BOT_TOKEN:
         bot = telegram.TelegramBot(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_API_BASE)
@@ -267,6 +402,8 @@ async def lifespan(_: FastAPI):
 
     yield
 
+    for task in list(_resumers):
+        task.cancel()  # siguen guardadas en paused.json: se reagendan al arrancar
     if poller:
         poller.cancel()
         with suppress(asyncio.CancelledError):
@@ -297,6 +434,12 @@ async def health() -> dict:
             "bot": bot.username if bot else None,
         },
         "inflight": len(_inflight),
+        "paused": len(_load_paused()),
+        "quota": [
+            {"family": w.family, "window": w.label, "remaining": w.remaining,
+             "resets_at": w.resets_at.isoformat()}
+            for w in await quota.read()
+        ],
         "vault": str(config.VAULT_PATH),
         "projects": vault.list_projects(),
         "models": config.MODELS,
@@ -326,6 +469,22 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
     live = _progress.get(x_orc_job)
     if live:
         live.section(role, body.project)
+    low = await quota.exhausted([config.MODELS[role]], force=True)
+    if low:
+        until = quota.resume_at(low)
+        if x_orc_job:
+            _paused_delegations[x_orc_job] = {
+                "role": role, "project": body.project,
+                "instruction": body.instruction, "windows": low,
+            }
+        if live:
+            live.agent_done(role, False, f"⏸️ en pausa por cuota hasta {quota.when(until)}")
+        raise HTTPException(
+            409,
+            f"Cuota agotada: {quota.describe(low)}. El sistema pausó esta tarea y la "
+            f"retoma solo {quota.when(until)}. No reintentes ni delegues otra cosa: "
+            "decile al usuario que quedó en pausa.",
+        )
     try:
         result = await runner.invoke_subagent(
             role, body.project, body.instruction,

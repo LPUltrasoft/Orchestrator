@@ -158,6 +158,31 @@ Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 | `POST` | `/sessions/{chat_id}/reset` | Borrar la memoria de ese chat |
 | `GET` | `/projects` | Proyectos en el vault |
 
+## Control de cuota
+
+Antes de cada turno del orquestador y de cada sub-agente, el gateway consulta
+`agy -p "/quota"`, que informa por familia de modelos cuánto queda de la ventana de 5
+horas y de la semanal, y cuándo se renueva cada una. Consultarla no consume cuota.
+
+Si a alguna le queda `QUOTA_MIN_REMAINING`% o menos (5% por defecto, o sea 95% usado):
+
+- **Al empezar un turno:** el pedido se guarda y llega
+  "⏸️ Pausé el trabajo: se usó el 97% de la cuota de 5 horas de Gemini. Se renueva hoy a
+  las 05:22; ahí retomo solo y te aviso." Los mensajes que lleguen mientras tanto quedan
+  anotados.
+- **A mitad de turno**, cuando el orquestador está por delegar: se rechaza la
+  delegación, el orquestador cierra su turno y el gateway agenda la continuación.
+- **Al renovarse:** "▶️ Se renovó la cuota. Retomo…", con todos los pedidos de ese chat
+  **en el orden en que llegaron**.
+- Las pausas se guardan en `state/paused.json`: **sobreviven a un reinicio** mientras
+  esperan.
+
+`/estado` en Telegram muestra lo que está en pausa y cuándo se retoma; `/health` muestra
+la cuota de cada ventana.
+
+Para probar sin agotar la cuota de verdad: `ORC_QUOTA_FILE=/ruta/quota.txt` hace que el
+gateway lea la salida de `/quota` de ese archivo.
+
 ## Operación
 
 - **Reiniciar es seguro.** La unit usa `KillMode=mixed`: el gateway deja de tomar

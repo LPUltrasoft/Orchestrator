@@ -36,6 +36,12 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org")
 TELEGRAM_POLL_TIMEOUT = int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "50"))
 
+# Cuota de agy: con este porcentaje restante o menos (95% usado), el trabajo se pausa
+# hasta que la ventana se renueva, y se retoma solo.
+QUOTA_MIN_REMAINING = int(os.environ.get("QUOTA_MIN_REMAINING", "5"))
+# Margen después de la hora de renovación antes de retomar.
+QUOTA_RESUME_BUFFER = int(os.environ.get("QUOTA_RESUME_BUFFER", "60"))
+
 # Alternativa: n8n como puerta de Telegram (requiere túnel HTTPS, ver n8n/README.md).
 N8N_CALLBACK_URL = os.environ.get("N8N_CALLBACK_URL", "")
 

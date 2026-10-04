@@ -49,7 +49,7 @@ def _doc(params: dict, *keys: str) -> str:
 def describe(step: dict) -> str | None:
     """Traduce un paso de agy a una línea legible, o None si no aporta nada."""
     if step.get("synthetic") == "retry":
-        return f"↻ comando no permitido ({step.get('detail', '')[:35]}), reintenta"
+        return f"↻ acción no permitida ({step.get('detail', '')[:40]}), reintenta"
     if step.get("step_type") != "tool" or step.get("state") != "ACTIVE":
         return None
     tool = step.get("tool_name", "")
