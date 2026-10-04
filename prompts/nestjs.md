@@ -15,19 +15,24 @@ Diseñás el backend: arquitectura, módulos y contratos HTTP.
 
 Valen para todo el código que escribas, incluidos los snippets de los documentos.
 
-### Nombres en snake_case
-- Funciones, métodos, variables, parámetros, propiedades y constantes en
-  **snake_case**: todo en minúsculas, palabras separadas por `_`. Ejemplos:
-  `calcular_ventana_recordatorio`, `turno_id`, `max_reintentos`.
-- Clases, interfaces, tipos y enums en PascalCase (`TurnosService`, `CrearTurnoDto`):
-  NestJS los necesita como clases.
-- Las propiedades de los DTO usan **exactamente los nombres de las columnas del
-  documento 03** (`paciente_id`, `fecha_hora_inicio`): así la API, el código y la base
-  hablan igual, sin mapeos.
+### Nombres: convención estándar de TypeScript
+
+| Qué | Estilo | Ejemplo |
+|-----|--------|---------|
+| Variables, funciones, métodos, parámetros, propiedades | camelCase | `turnoId`, `calcularEnvios()` |
+| Clases, interfaces, tipos, enums | PascalCase | `TurnosService`, `CrearTurnoDto` |
+| Constantes globales | UPPER_SNAKE_CASE | `MAX_REINTENTOS` |
+| Archivos | kebab-case con el sufijo de NestJS | `turnos.service.ts`, `crear-turno.dto.ts` |
+
+- **La base de datos sigue en snake_case** (documento 03) y el ORM traduce los nombres
+  solo: en TypeORM con `SnakeNamingStrategy` (paquete `typeorm-naming-strategies`), en
+  Prisma con `@map` y `@@map`. Nunca escribas a mano el mapeo columna por columna.
+- Cada propiedad de un DTO corresponde a una columna del documento 03, con el mismo
+  nombre pasado a camelCase: `paciente_id` → `pacienteId`, `fecha_hora_inicio` →
+  `fechaHoraInicio`.
 - Los valores de un enum se escriben igual que en el documento 03.
-- **Única excepción:** los nombres que imponen NestJS o las librerías no se tocan
-  (`onModuleInit`, `canActivate`, `findOne`, decoradores). No los "corrijas" a snake_case:
-  dejarían de funcionar.
+- El esquema lo maneja Liquibase (documento 03): el ORM nunca lo sincroniza
+  (`synchronize: false` en TypeORM, sin `prisma db push`).
 
 ### Todo tipado
 - TypeScript con `strict: true`. Nada de `any`: si un tipo es desconocido, usá
@@ -43,7 +48,7 @@ Valen para todo el código que escribas, incluidos los snippets de los documento
 
 ```ts
 // Calcula cuándo mandar cada recordatorio; si cae domingo, lo pasa al lunes 08:00.
-function calcular_envios(turno: Turno, ahora: Date): Date[] {
+function calcularEnvios(turno: Turno, ahora: Date): Date[] {
 ```
 
 ### Tests
@@ -51,7 +56,7 @@ function calcular_envios(turno: Turno, ahora: Date): Date[] {
   controladores, y `supertest` para los endpoints (e2e).
 - Cada test cubre el caso feliz y al menos un caso de error o borde, por ejemplo un
   turno inexistente o un horario fuera de la ventana de recordatorios.
-- Las funciones auxiliares de los tests también van en snake_case y tipadas.
+- Los tests siguen las mismas convenciones: nombres en camelCase y todo tipado.
 
 ### API
 - Endpoints REST en plural y kebab-case: `GET /api/v1/medical-appointments`.
