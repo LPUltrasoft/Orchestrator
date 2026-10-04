@@ -62,16 +62,20 @@ PHASES = (
           "técnica de esas estimaciones; y en legal la propuesta y el contrato (09). Pedí la "
           "aprobación «contrato»."),
     Phase(4, "Repos y esqueleto", "📦", ("devops",), None, False, _NOT_YET),
-    Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "revisor_ux_ui", "dba", "lider_tecnico", "seguridad"), "diseño", True,
+    Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "revisor_ux_ui", "imagenes", "dba", "lider_tecnico",
+                                     "devops", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
           "Diseño/DESIGN.md) y la lista de pantallas (Diseño/Pantallas.md), mobile first y "
           "responsive. Con eso, generá las pantallas con orc-diseno: el usuario recibe las "
           "capturas en celular y escritorio. Después, revisor_ux_ui revisa UX, UI y las "
           "capturas (13); si pide cambios, que los hagan ux o ui y corregí las pantallas con "
-          "orc-diseno editar. Además: "
-          "dba, el modelo y el catálogo de funciones (03), "
-          "y lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
-          "entre desarrollo y producción (02). Opcional: seguridad revisa el diseño (12). "
+          "orc-diseno editar. Con el diseño encaminado, imagenes genera los conceptos de "
+          "logo, el ícono de la web y las ilustraciones que hagan falta: el usuario las "
+          "recibe por Telegram. Además: "
+          "dba, el modelo y el catálogo de funciones (03); "
+          "lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
+          "entre desarrollo y producción (02); y devops, el plan de repos, Docker, los dos "
+          "ambientes, Jenkins y backups (06). Opcional: seguridad revisa el diseño (12). "
           "Pedí la aprobación «diseño» cuando la revisión diga «Lista para aprobar»."),
     Phase(6, "Planificación", "📌", ("team_leader", "qa"), "plan", True,
           "Delegá en team_leader el plan de trabajo (10) y en qa el plan de pruebas por tarea "

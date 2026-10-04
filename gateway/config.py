@@ -27,6 +27,11 @@ TOKEN = os.environ.get("GATEWAY_TOKEN", "")
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", "")).expanduser()
 PROJECTS_SUBDIR = os.environ.get("PROJECTS_SUBDIR", "Proyectos")
 VAULT_AUTOCOMMIT = os.environ.get("VAULT_AUTOCOMMIT", "true").lower() == "true"
+# Subir el vault a GitHub solo: cada VAULT_PUSH_INTERVAL segundos, si hay commits sin
+# subir. Si falla durante VAULT_PUSH_ALERT_AFTER segundos seguidos, avisa por Telegram.
+VAULT_AUTOPUSH = os.environ.get("VAULT_AUTOPUSH", "true").lower() == "true"
+VAULT_PUSH_INTERVAL = int(os.environ.get("VAULT_PUSH_INTERVAL", "30"))
+VAULT_PUSH_ALERT_AFTER = int(os.environ.get("VAULT_PUSH_ALERT_AFTER", "1800"))
 
 AGY_BIN = os.environ.get("AGY_BIN", "agy")
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "900"))
@@ -70,6 +75,7 @@ _DEFAULT_AGENTS = {
     "legal":          ("agy",    "gemini-3.1-pro-high",   None),
     "ux":             ("agy",    "gemini-3.1-pro-high",   None),
     "ui":             ("agy",    "gemini-3.1-pro-high",   None),
+    "imagenes":       ("agy",    "gemini-3.1-pro-high",   None),
     "revisor_ux_ui":  ("claude", "claude-sonnet-5-5",     "medium"),
     "qa":             ("claude", "claude-opus-5-5",       "medium"),
     "lider_tecnico":  ("claude", "claude-opus-5-5",       "high"),
@@ -78,11 +84,14 @@ _DEFAULT_AGENTS = {
     "seguridad":      ("claude", "claude-opus-5-5",       "high"),
     "backend":        ("claude", "claude-opus-5-5",       "medium"),
     "frontend":       ("claude", "claude-opus-5-5",       "medium"),
+    "devops":         ("claude", "claude-opus-5-5",       "high"),
 }
 ENGINES = {r: os.environ.get(f"ENGINE_{r.upper()}", e) for r, (e, _, _) in _DEFAULT_AGENTS.items()}
 MODELS = {r: os.environ.get(f"MODEL_{r.upper()}", m) for r, (_, m, _) in _DEFAULT_AGENTS.items()}
 EFFORTS = {r: os.environ.get(f"EFFORT_{r.upper()}", f) or None for r, (_, _, f) in _DEFAULT_AGENTS.items()}
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
+# Donde agy guarda lo que genera cada conversación (por ejemplo, las imágenes).
+AGY_BRAIN_DIR = Path(os.environ.get("AGY_BRAIN_DIR", Path.home() / ".gemini/antigravity-cli/brain"))
 
 # MCP que puede usar cada rol de Claude: solo estos, los del usuario no se cargan nunca.
 # Cada uno declara las herramientas que se le permiten, de a una. Se cambia con
@@ -94,7 +103,7 @@ MCP_SERVERS = {
         "tools": ("resolve-library-id", "query-docs"),
     },
 }
-_DEFAULT_MCPS = {"lider_tecnico": "context7", "dba": "context7"}
+_DEFAULT_MCPS = {"lider_tecnico": "context7", "dba": "context7", "devops": "context7"}
 MCPS = {
     r: tuple(m.strip() for m in os.environ.get(f"MCP_{r.upper()}", _DEFAULT_MCPS.get(r, "")).split(",") if m.strip())
     for r in _DEFAULT_AGENTS

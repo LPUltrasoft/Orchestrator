@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,6 +35,17 @@ def project_lock(name: str):
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
 
+
+# Corte de red a mitad de una corrida de Claude (verificado el 4/10/2026: "API Error:
+# Can't reach the API server — check your internet or DNS (EAI_AGAIN)" después de
+# varios minutos de reintentos propios). Se retoma la misma sesión cuando vuelve la red.
+_NETWORK_ERROR = re.compile(
+    r"API Error: (Can't reach the API server|Connection error|Request timed out)"
+    r"|EAI_AGAIN|ECONNRESET|ETIMEDOUT|ENOTFOUND",
+    re.I,
+)
+NETWORK_RETRY_PROMPT = "Se cortó la conexión a mitad de tu trabajo. Seguí exactamente donde quedaste."
+NETWORK_RETRY_WAIT = int(os.environ.get("NETWORK_RETRY_WAIT", "60"))
 
 DENIED_RETRY_PROMPT = (
     "El comando shell que intentaste fue denegado: en este entorno corrés sin "
@@ -296,6 +309,7 @@ async def run_claude(
     denied_retries: int = 2,
     on_step: StepCallback | None = None,
     mcps: tuple[str, ...] = (),
+    network_retries: int = 2,
 ) -> dict:
     """Corre un agente con el CLI de Claude Code, aislado de la configuración personal
     del usuario, y devuelve su resultado con el mismo formato que run_agy."""
@@ -392,8 +406,21 @@ async def run_claude(
                 prompt=DENIED_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
                 session_id=data["conversation_id"], timeout=timeout,
                 denied_retries=denied_retries - 1, on_step=on_step, mcps=mcps,
+                network_retries=network_retries,
             )
         raise RuntimeError(f"claude denegó herramientas: {detail}")
+    if (data["status"] != "SUCCESS" and _NETWORK_ERROR.search(data["response"])
+            and network_retries > 0 and data["conversation_id"]):
+        log.warning("claude perdió la conexión (%s); retomo la sesión en %d s",
+                    data["response"][:120], NETWORK_RETRY_WAIT)
+        _notify_step(on_step, {"synthetic": "network"})
+        await asyncio.sleep(NETWORK_RETRY_WAIT)
+        return await run_claude(
+            prompt=NETWORK_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
+            session_id=data["conversation_id"], timeout=timeout,
+            denied_retries=denied_retries, on_step=on_step, mcps=mcps,
+            network_retries=network_retries - 1,
+        )
     if data["status"] != "SUCCESS" and not data["response"].strip():
         raise RuntimeError(f"claude terminó con error: {stderr[-500:] or result_event}")
     return data
@@ -452,6 +479,8 @@ Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 | 05 - Frontend & Experiencia de Usuario (UI-UX) | UX y UI |
 | Diseño/DESIGN.md y Diseño/Pantallas.md | UI |
 | Diseño/Pantallas/ y Diseño/stitch.json | El sistema (Stitch) |
+| Diseño/Imágenes.md | Imágenes |
+| Diseño/Imágenes/ | El sistema (guarda lo que genera Imágenes) |
 | 06 - DevOps, Docker & CI-CD | DevOps |
 | 08 - Estimaciones | Team leader |
 | 09 - Propuesta y Contrato | Legal |
@@ -482,6 +511,38 @@ para qué). Es lo único que va a leer el Director de Proyecto.
 """
 
 
+IMAGES_DIR = "Diseño/Imágenes"
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _collect_images(conversation_id: str | None, since: float, project_path: Path) -> list[Path]:
+    """Copia al proyecto las imágenes que generó agy en esta corrida.
+
+    agy las deja en la carpeta de la conversación (brain/<id>/nombre_<marca>.jpg) y el
+    agente no puede copiarlas (no tiene `cp`): las copia el gateway."""
+    source = config.AGY_BRAIN_DIR / conversation_id if conversation_id else None
+    if not source or not source.is_dir():
+        return []
+    dest = project_path / IMAGES_DIR
+    copied: list[Path] = []
+    candidates = [
+        p for p in source.iterdir()
+        if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES and p.stat().st_mtime >= since
+    ]
+    for image in sorted(candidates, key=lambda p: p.stat().st_mtime):
+        # "logo_concepto_1_1791152163067.jpg" -> "logo-concepto-1.jpg"
+        stem = re.sub(r"_\d{10,}$", "", image.stem).replace("_", "-") or "imagen"
+        target = dest / f"{stem}{image.suffix.lower()}"
+        n = 2
+        while target in copied:  # el mismo nombre dos veces en una corrida: no pisar
+            target = dest / f"{stem}-{n}{image.suffix.lower()}"
+            n += 1
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(image, target)
+        copied.append(target)
+    return copied
+
+
 async def invoke_subagent(
     role: str, project: str, instruction: str, on_step: StepCallback | None = None
 ) -> dict:
@@ -492,6 +553,7 @@ async def invoke_subagent(
     project_path = await asyncio.to_thread(vault.project_dir, project)
     with project_lock(project):
         before = await asyncio.to_thread(vault.snapshot)
+        started = time.time()
         prompt = build_subagent_prompt(role, project, instruction, project_path)
         if config.ENGINES[role] == "claude":
             result = await run_claude(
@@ -502,6 +564,11 @@ async def invoke_subagent(
             result = await run_agy(
                 prompt=prompt, model=config.MODELS[role], cwd=project_path,
                 caller=role, on_step=on_step,
+            )
+        images: list[Path] = []
+        if role == "imagenes":
+            images = await asyncio.to_thread(
+                _collect_images, result.get("conversation_id"), started - 1, project_path
             )
         # git bloquea: fuera del event loop para no frenar las demás requests.
         files_changed = await asyncio.to_thread(vault.changed_since, before)
@@ -529,6 +596,7 @@ async def invoke_subagent(
         "files_changed": files_changed,
         "commit": commit_hash,
         "usage": result.get("usage", {}),
+        "images": [vault.relative(p) for p in images],
         # Señal de alerta: dijo que escribió pero git no vio nada.
         "suspect_no_writes": claimed and not files_changed,
     }

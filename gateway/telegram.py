@@ -55,6 +55,16 @@ _INTERNAL_BLOCK = re.compile(r"<([A-Z][A-Z0-9_]{2,})>.*?</\1>\s*", re.S)
 _INTERNAL_TAG = re.compile(r"</?[A-Z][A-Z0-9_]{2,}>\s*")
 
 
+# Avisos internos de agy que a veces se cuelan al principio de la respuesta, por
+# ejemplo cuando una herramienta falla y agy reintenta solo:
+# "An error occurred while calling the tool. Execution will continue with the original
+# message. WaitMsBeforeAsync is too small. Please set a larger value and retry."
+_AGY_TOOL_ERROR = re.compile(
+    r"An error occurred while calling the tool\.\s*Execution will continue with the original message\."
+    r"(?:[^\n]*?Please set a larger value and retry\.)?\s*"
+)
+
+
 def to_plain_text(text: str) -> str:
     """Saca el Markdown que los modelos usan aunque el prompt se lo prohíba.
 
@@ -63,6 +73,7 @@ def to_plain_text(text: str) -> str:
     """
     text = _INTERNAL_BLOCK.sub("", text)
     text = _INTERNAL_TAG.sub("", text)
+    text = _AGY_TOOL_ERROR.sub("", text)
     text = _FILE_LINK.sub(r"\1", text)
     text = _WEB_LINK.sub(r"\1 (\2)", text)
     text = _BARE_FILE_URL.sub(lambda m: unquote(m.group().rstrip("/").rsplit("/", 1)[-1]), text)
@@ -151,12 +162,12 @@ class TelegramBot:
             chunk = photos[start:start + 10]
             if len(chunk) == 1:
                 image, caption = chunk[0]
-                files = {"photo": ("pantalla.png", image, "image/png")}
+                files = {"photo": _photo_file("imagen", image)}
                 data = {"chat_id": chat_id, "caption": caption[:1024]}
                 method = "sendPhoto"
             else:
                 files = {
-                    f"p{i}": (f"pantalla{i}.png", image, "image/png")
+                    f"p{i}": _photo_file(f"imagen{i}", image)
                     for i, (image, _) in enumerate(chunk)
                 }
                 media = [
@@ -247,3 +258,11 @@ class TelegramBot:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+def _photo_file(name: str, image: bytes) -> tuple[str, bytes, str]:
+    """Nombre y tipo según el contenido: las capturas de Stitch son PNG; las de agy, JPEG."""
+    if image[:3] == b"\xff\xd8\xff":
+        return f"{name}.jpg", image, "image/jpeg"
+    return f"{name}.png", image, "image/png"
+

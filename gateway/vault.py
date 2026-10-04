@@ -6,6 +6,7 @@ creemos al texto: comparamos el estado de git antes y después.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -26,7 +27,7 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     return result.stdout
 
 
-def _run_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run_git(*args: str, cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(
         # quotePath=false: sin esto git escapa los acentos como \303\215.
         # hooksPath y fsmonitor anulados: un agente con permiso de `git config`
@@ -37,8 +38,27 @@ def _run_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess
         cwd=str(cwd or config.VAULT_PATH),
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=timeout,
+        # Nunca esperar que alguien escriba una contraseña: si faltan credenciales, falla.
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
+
+
+def unpushed() -> int | None:
+    """Commits que todavía no están en GitHub, o None si el vault no tiene rama remota."""
+    with _git_lock:
+        result = _run_git("rev-list", "--count", "@{upstream}..HEAD")
+    if result.returncode != 0:
+        return None  # sin rama remota, por ejemplo en un clon de prueba
+    return int(result.stdout.strip() or 0)
+
+
+def push() -> None:
+    """Sube los commits a la rama remota. Lanza RuntimeError si no puede."""
+    # Sin el lock: la red puede tardar y no tiene que frenar los commits; push solo lee refs.
+    result = _run_git("push", "--quiet", timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr.strip() or result.stdout.strip() or "git push falló")[-300:])
 
 
 def snapshot() -> dict[str, str]:

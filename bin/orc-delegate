@@ -20,6 +20,9 @@ ROLES
   ux              Flujos y wireframes, mobile first (05).
   ui              Sistema de diseño y pantallas (05).
   revisor_ux_ui   Revisa UX, UI y las capturas de Stitch (13).
+  imagenes        Conceptos de logo, ícono de la web e ilustraciones (el usuario las
+                  recibe por Telegram).
+  devops          Plan de repos, Docker, los dos ambientes, Jenkins y backups (06).
   seguridad       Revisión de seguridad (12).
   backend         Desarrollo del back (etapa 3, todavía no disponible).
   frontend        Desarrollo del front (etapa 3, todavía no disponible).

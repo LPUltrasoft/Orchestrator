@@ -186,6 +186,7 @@ trabajan sin fases.
 | `legal` | 09 propuesta y contrato (borrador) | agy | `gemini-3.1-pro-high` | — |
 | `ux` | 05, sección UX | agy | `gemini-3.1-pro-high` | — |
 | `ui` | 05 sección UI, `Diseño/DESIGN.md` y `Pantallas.md` | agy | `gemini-3.1-pro-high` | — |
+| `imagenes` | Logo, ícono e ilustraciones (`Diseño/Imágenes/`, por Telegram) | agy | `gemini-3.1-pro-high` | — |
 | `revisor_ux_ui` | 13 revisión de UX, UI y capturas | claude | `claude-sonnet-5-5` | medium |
 | `qa` | 11 plan de pruebas | claude | `claude-opus-5-5` | medium |
 | `backend` | Código del back en su repo (etapa 3) | claude | `claude-opus-5-5` | medium |
@@ -194,6 +195,7 @@ trabajan sin fases.
 | `dba` | 03 modelo y funciones almacenadas | claude | `claude-opus-5-5` | high |
 | `team_leader` | 08 estimaciones, 10 plan de trabajo | claude | `claude-opus-5-5` | high |
 | `seguridad` | 12 revisión de seguridad | claude | `claude-opus-5-5` | high |
+| `devops` | 06 plan de repos, Docker, ambientes, Jenkins y backups | claude | `claude-opus-5-5` | high |
 
 Se cambian con `ENGINE_<ROL>`, `MODEL_<ROL>` y `EFFORT_<ROL>` en el `.env`.
 
@@ -276,7 +278,7 @@ claude -p --output-format stream-json --verbose --model <modelo> --effort <nivel
   del vault y escribir fuera del proyecto se deniega).
 - **MCP por rol**: solo los de `MCP_SERVERS` en `config.py`, con sus herramientas
   permitidas de a una. Hoy, **Context7** (documentación actual de librerías, solo
-  lectura) para `lider_tecnico` y `dba`. Se cambia con `MCP_<ROL>` en el `.env`. Los
+  lectura) para `lider_tecnico`, `dba` y `devops`. Se cambia con `MCP_<ROL>` en el `.env`. Los
   roles sin MCP suman `--safe-mode`, que apagaría también los MCP elegidos.
 - El prompt va por stdin y la memoria del rol se retoma con `--resume <session_id>`.
 - `--bare` no sirve: pide API key y la suscripción entra por OAuth.
@@ -329,6 +331,11 @@ hacen que el gateway lea la salida de `/quota` y de `/usage` de esos archivos.
 
 ## Operación
 
+- **El vault se sube solo a GitHub**: cada 30 s, si hay commits sin subir. Si falla más
+  de 30 minutos, avisa por Telegram (y cuando se recupera); al apagarse hace un último
+  push. Estado en `/health` → `vault_push`. Usa las credenciales de `gh auth login`.
+- **Cortes de red**: si una corrida de Claude se cae por falta de conexión, el gateway
+  retoma la misma sesión al minuto, hasta dos veces.
 - **Reiniciar es seguro.** La unit usa `KillMode=mixed`: el gateway deja de tomar
   mensajes, espera hasta 280 s a que terminen los trabajos en curso, entrega las
   respuestas y recién ahí sale. Verificado con SIGTERM a mitad de un turno.

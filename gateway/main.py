@@ -8,10 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
+from pathlib import PurePath
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -58,6 +60,8 @@ _progress: dict[str, progress.Progress] = {}
 # Pedidos pausados por cuota, persistidos: sobreviven a un reinicio mientras esperan.
 _PAUSED_FILE = config.STATE_DIR / "paused.json"
 _resumers: set[asyncio.Task] = set()
+# Estado del push automático del vault a GitHub (se ve en /health y en /estado).
+_push = {"pending": None, "last_push": None, "failing_since": None, "error": None, "alerted": False}
 # Delegaciones rechazadas por cuota a mitad de un turno, por job_id: al terminar ese
 # turno se agenda la continuación.
 _paused_delegations: dict[str, dict] = {}
@@ -153,6 +157,58 @@ async def _notify(chat_id: str, text: str, job_id: str) -> None:
                 log.error("callback a n8n devolvió %s: %s", response.status_code, response.text[:300])
     except httpx.HTTPError as exc:
         log.error("callback a n8n falló: %s", exc)
+
+
+async def _alert(text: str) -> None:
+    """Aviso del sistema, no de un trabajo: va a todos los chats autorizados."""
+    if not bot or not config.ALLOWED_CHAT_IDS:
+        log.warning("aviso sin destinatario: %s", text)
+        return
+    for chat_id in config.ALLOWED_CHAT_IDS:
+        try:
+            await bot.send(chat_id, text)
+        except (httpx.HTTPError, telegram.TelegramError) as exc:
+            log.error("no pude mandar el aviso a %s: %s", chat_id, exc)
+
+
+async def _push_vault() -> None:
+    """Sube a GitHub los commits del vault. Si falla un buen rato, avisa una sola vez."""
+    pending = await asyncio.to_thread(vault.unpushed)
+    _push["pending"] = pending
+    if not pending:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        await asyncio.to_thread(vault.push)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        _push["error"] = str(exc)
+        # Una advertencia al empezar a fallar; los reintentos van a debug para no llenar el log.
+        (log.debug if _push["failing_since"] else log.warning)(
+            "no pude subir el vault (%d commits pendientes): %s", pending, exc)
+        _push["failing_since"] = _push["failing_since"] or now
+        failing = (now - _push["failing_since"]).total_seconds()
+        if not _push["alerted"] and failing >= config.VAULT_PUSH_ALERT_AFTER:
+            _push["alerted"] = True
+            commits = "1 commit" if pending == 1 else f"{pending} commits"
+            await _alert(
+                f"⚠️ Hace {max(1, int(failing // 60))} minutos que no puedo subir el vault a "
+                f"GitHub ({commits} sin subir). Si la PC se rompe, eso se pierde.\n\n"
+                f"Error: {_push['error']}"
+            )
+        return
+    log.info("vault subido a GitHub (%d commits)", pending)
+    if _push["alerted"]:
+        await _alert("✅ Ya pude subir el vault a GitHub: no queda nada pendiente.")
+    _push.update(pending=0, last_push=now, failing_since=None, error=None, alerted=False)
+
+
+async def _vault_pusher() -> None:
+    while True:
+        await asyncio.sleep(config.VAULT_PUSH_INTERVAL)
+        try:
+            await _push_vault()
+        except Exception:  # noqa: BLE001 — que un error raro no apague el push para siempre
+            log.exception("error inesperado subiendo el vault")
 
 
 async def _keep_typing(chat_id: str) -> None:
@@ -635,6 +691,11 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
             await bot.send(chat_id, f"En curso ({len(running)}):\n{lines}")
         if not running and not paused:
             await bot.send(chat_id, "No hay nada en curso.")
+        if _push["failing_since"]:
+            await bot.send(chat_id, (
+                f"⚠️ El vault no se sube a GitHub desde las "
+                f"{_push['failing_since'].astimezone():%H:%M} ({_push['pending']} sin subir)."
+            ))
         staged = await asyncio.to_thread(process.projects_with_state)
         if staged:
             await bot.send(chat_id, "📍 Proyectos:\n" + "\n".join(
@@ -688,6 +749,9 @@ async def lifespan(_: FastAPI):
     if config.TELEGRAM_BOT_TOKEN:
         bot = telegram.TelegramBot(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_API_BASE)
         poller = asyncio.create_task(bot.poll_forever(_on_telegram_message, _on_telegram_callback))
+    pusher = None
+    if config.VAULT_AUTOCOMMIT and config.VAULT_AUTOPUSH:
+        pusher = asyncio.create_task(_vault_pusher())
 
     yield
 
@@ -700,6 +764,12 @@ async def lifespan(_: FastAPI):
     if _inflight:
         log.info("esperando %d trabajo(s) en curso antes de apagar", len(_inflight))
         await asyncio.wait(_inflight, timeout=SHUTDOWN_GRACE)
+    if pusher:
+        pusher.cancel()
+        # Lo último que commitearon los trabajos que acaban de terminar. Poco margen:
+        # systemd corta a los 300 s y la espera de arriba puede haber usado 280.
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(_push_vault(), timeout=15)
     if bot:
         await bot.close()
 
@@ -731,6 +801,7 @@ async def health() -> dict:
             for w in await quota.read_all()
         ],
         "vault": str(config.VAULT_PATH),
+        "vault_push": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _push.items()},
         "projects": vault.list_projects(),
         "models": config.MODELS,
     }
@@ -802,7 +873,23 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
             + (f" · commit {result['commit']}" if result.get("commit") else "")
             if files else "no escribió archivos",
         )
+    if result.get("images"):
+        await _send_images(_chat_for(x_orc_job), result["images"])
     return result
+
+
+async def _send_images(chat_id: str | None, images: list[str]) -> None:
+    """Las imágenes que generó el rol Imágenes, en un álbum, con el nombre de cada una."""
+    if not bot or not chat_id:
+        return
+    try:
+        photos = [
+            ((config.VAULT_PATH / path).read_bytes(), PurePath(path).stem)
+            for path in images
+        ]
+        await bot.send_album(chat_id, photos)
+    except (OSError, httpx.HTTPError, telegram.TelegramError) as exc:
+        log.error("no pude mandar las imágenes generadas: %s", exc)
 
 
 @app.post("/aprobaciones", dependencies=[Depends(auth)])

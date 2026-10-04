@@ -30,10 +30,12 @@ AGENTS = {
     "team_leader": "📌 Team leader",
     "ux": "🧩 UX",
     "ui": "🎨 UI",
+    "imagenes": "🖼️ Imágenes",
     "revisor_ux_ui": "👁️ Revisor UX/UI",
     "seguridad": "🛡️ Seguridad",
     "backend": "⚙️ Backend",
     "frontend": "🖥️ Frontend",
+    "devops": "🚀 DevOps",
     "stitch": "🖌️ Stitch",
 }
 MAX_ACTIONS = 4  # acciones visibles por agente: el mensaje tiene que entrar en pantalla
@@ -56,10 +58,15 @@ def _doc(params: dict, *keys: str) -> str:
     return name if len(name) <= 45 else name[:44] + "…"
 
 
-def describe(step: dict) -> str | None:
+def describe(step: dict, agent: str | None = None) -> str | None:
     """Traduce un paso de agy a una línea legible, o None si no aporta nada."""
+    if step.get("synthetic") == "network":
+        return "📡 se cortó la conexión: retoma en un minuto"
     if step.get("synthetic") == "retry":
         return f"↻ acción no permitida ({step.get('detail', '')[:40]}), reintenta"
+    # agy genera las imágenes con un subagente propio.
+    if step.get("step_type") == "subagent" and step.get("state") == "ACTIVE":
+        return "🎨 genera una imagen" if agent == "imagenes" else "🧩 trabaja con un subagente"
     if step.get("step_type") != "tool" or step.get("state") != "ACTIVE":
         return None
     tool = step.get("tool_name", "")
@@ -172,7 +179,7 @@ class Progress:
         return created
 
     def step(self, agent: str, step: dict) -> None:
-        line = describe(step)
+        line = describe(step, agent)
         if not line:
             return
         section = self.section(agent)
