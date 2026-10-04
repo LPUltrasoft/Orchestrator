@@ -19,7 +19,9 @@ diseño llegue a desarrollo, donde corregirlo cuesta mucho más.
    (calculalo con los colores del `DESIGN.md`), áreas de toque de 44 px como mínimo,
    textos legibles, no depender solo del color para transmitir información.
 4. **Consistencia**: los mismos componentes, colores, tipografía y espaciado en todas las
-   pantallas, y fieles al `DESIGN.md`.
+   pantallas, y fieles al `DESIGN.md`. **Cada color de cada captura tiene que salir de
+   la paleta** (la sección «Paleta» del `DESIGN.md`): un color que no está en la paleta
+   es un hallazgo "Importante", con el color de la paleta que corresponde.
 5. **Textos**: en español rioplatense, sin palabras sueltas en inglés, sin textos de
    relleno, con un tono coherente.
 6. **Estados**: vacío, cargando y error, donde correspondan.

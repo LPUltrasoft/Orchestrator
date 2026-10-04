@@ -14,6 +14,8 @@ PUERTAS
   alcance    Fase 1: MVP y backlog.
   stack      Fase 2: stack técnico (con todos los ADRs ya aprobados).
   contrato   Fase 3: estimaciones, propuesta y contrato.
+  paleta     Fase 5: la paleta de colores del DESIGN.md, antes de generar pantallas.
+             El usuario la ve en una imagen con los contrastes.
   diseño     Fase 5: UX, UI, modelo de datos y contrato de la API.
   plan       Fase 6: plan de trabajo y plan de pruebas.
   ADR-NNN    Un ADR puntual, por ejemplo ADR-003.

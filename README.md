@@ -226,9 +226,17 @@ usarlos**: el gateway marca quién invoca cada `agy` en `ORC_CALLER`.
 
 ### Diseño con Stitch
 
-En la fase 5, el rol `ui` escribe `Diseño/DESIGN.md` (sistema de diseño) y
-`Diseño/Pantallas.md` (cada pantalla con su prompt, en un bloque JSON). `orc-diseno`
-hace el resto, en el gateway: crea el proyecto en Stitch, carga el sistema de diseño
+En la fase 5, el rol `ui` escribe `Diseño/DESIGN.md` (sistema de diseño, que empieza por
+la **paleta de colores**) y `Diseño/Pantallas.md` (cada pantalla con su prompt, en un
+bloque JSON).
+
+**La paleta es la fuente única de colores** (`gateway/palette.py`). Se aprueba con la
+puerta «paleta»: al usuario le llega una imagen con los colores, su uso y los contrastes
+AA. Sin ella aprobada, `orc-diseno` y la puerta «diseño» responden 409; si cambia
+después de aprobada, hay que volver a aprobarla (se guarda una huella). El gateway le
+agrega la lista de colores a cada prompt de Stitch.
+
+`orc-diseno` hace el resto, en el gateway: crea el proyecto en Stitch, carga el sistema de diseño
 (`upload_design_md` + `create_design_system_from_design_md`), genera cada pantalla para
 celular y escritorio, baja la captura y el HTML a `Diseño/Pantallas/`, arma el índice
 `Pantallas generadas.md` y te manda las capturas por Telegram en un álbum. Si una

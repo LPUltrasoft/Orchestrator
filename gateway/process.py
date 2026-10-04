@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, vault
+from . import config, palette, vault
 
 STATE_FILE = "Estado del Proyecto.md"
 ADR_DIR = "ADRs"
@@ -65,9 +65,10 @@ PHASES = (
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "revisor_ux_ui", "imagenes", "dba", "lider_tecnico",
                                      "devops", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
-          "Diseño/DESIGN.md) y la lista de pantallas (Diseño/Pantallas.md), mobile first y "
-          "responsive. Con eso, generá las pantallas con orc-diseno: el usuario recibe las "
-          "capturas en celular y escritorio. Después, revisor_ux_ui revisa UX, UI y las "
+          "Diseño/DESIGN.md, que empieza por la paleta de colores) y la lista de pantallas "
+          "(Diseño/Pantallas.md), mobile first y responsive. Pedí la aprobación «paleta»: el "
+          "usuario ve los colores en una imagen. Con la paleta aprobada, generá las pantallas "
+          "con orc-diseno: el usuario recibe las capturas en celular y escritorio. Después, revisor_ux_ui revisa UX, UI y las "
           "capturas (13); si pide cambios, que los hagan ux o ui y corregí las pantallas con "
           "orc-diseno editar. Con el diseño encaminado, imagenes genera los conceptos de "
           "logo, el ícono de la web y las ilustraciones que hagan falta: el usuario las "
@@ -86,8 +87,13 @@ PHASES = (
 )
 _BY_NUMBER = {p.number: p for p in PHASES}
 GATES = {p.gate: p.number for p in PHASES if p.gate}
+# Aprobaciones que no cierran una fase pero son requisito de su puerta, como los ADRs
+# para «stack». La paleta se aprueba antes de generar pantallas: es la fuente única de
+# colores de todo el proyecto.
+EXTRA_GATES = {"paleta": 5}
 GATE_LABELS = {
     "alcance": "Alcance: MVP y backlog",
+    "paleta": "Paleta de colores",
     "stack": "Stack técnico",
     "contrato": "Propuesta y contrato",
     "diseño": "Diseño y datos",
@@ -236,8 +242,12 @@ def validate_gate(project: str, state: dict | None, gate: str) -> str | None:
         if adr["approved"]:
             return f"{gate} ya está aprobado."
         return None
+    if gate in EXTRA_GATES:
+        if state["fase"] < EXTRA_GATES[gate]:
+            return f"«{gate}» se aprueba a partir de la fase {phase(EXTRA_GATES[gate]).label}."
+        return None
     if gate not in GATES:
-        valid = ", ".join(GATES)
+        valid = ", ".join([*GATES, *EXTRA_GATES])
         return f"Puerta desconocida: «{gate}». Válidas: {valid}, o el id de un ADR (ADR-001)."
     if GATES[gate] > state["fase"]:
         return (
@@ -248,6 +258,26 @@ def validate_gate(project: str, state: dict | None, gate: str) -> str | None:
         pending = [a["id"] for a in list_adrs(project) if not a["approved"]]
         if pending:
             return f"Antes de «stack» falta aprobar: {', '.join(pending)}."
+    if gate == "diseño":
+        problem = palette_problem(project, state)
+        if problem:
+            return f"Antes de «diseño», {problem}."
+    return None
+
+
+def palette_problem(project: str, state: dict | None) -> str | None:
+    """Qué le falta a la paleta para poder usarse, o None si está aprobada y no cambió."""
+    if state is None:
+        return None  # proyecto anterior al proceso: sin puertas
+    approved = state["aprobaciones"].get("paleta")
+    if not approved:
+        return "falta aprobar la paleta de colores (puerta «paleta»)"
+    try:
+        current = palette.fingerprint(project)
+    except palette.PaletteError:
+        current = ""
+    if approved.get("huella") and current != approved["huella"]:
+        return "la paleta cambió después de aprobarla: hay que volver a aprobarla (puerta «paleta»)"
     return None
 
 
@@ -282,6 +312,9 @@ def approve(project: str, state: dict, approval_id: str, by: str) -> tuple[str, 
         _mark_adr_approved(project, gate, by)
     state["pendientes"].pop(approval_id)
     state["aprobaciones"][gate] = {"fecha": _now(), "por": by}
+    if gate == "paleta":
+        # La huella de los colores aprobados: si UI los cambia, hay que volver a aprobar.
+        state["aprobaciones"][gate]["huella"] = palette.fingerprint(project)
     advanced = None
     if gate in GATES and GATES[gate] == state["fase"]:
         state["fase"] = advanced = _next_phase(state["fase"])
@@ -531,6 +564,12 @@ def after_approval_text(project: str, state: dict, gate: str, by: str, advanced:
     if advanced:
         current = phase(advanced)
         text += f" El proyecto pasó a la fase {current.label}. Qué hacer ahora: {current.guide}"
+    elif gate == "paleta":
+        text += (
+            " La paleta es ahora la fuente única de colores del proyecto: Stitch, Imágenes y "
+            "Frontend la usan, y el Revisor controla que nadie se salga. Seguí con orc-diseno "
+            "para generar las pantallas."
+        )
     elif gate.startswith("ADR-"):
         pending = [a["id"] for a in list_adrs(project) if not a["approved"]]
         text += (
@@ -575,6 +614,12 @@ def render(project: str, state: dict) -> str:
             mark, when, who = "⏳ Esperando al usuario", "", ""
         else:
             mark, when, who = "—", "", ""
+        rows.append(f"| {phase(number).label} | {GATE_LABELS[gate]} | {mark} | {when} | {who} |")
+    for gate, number in EXTRA_GATES.items():
+        approved = state["aprobaciones"].get(gate)
+        waiting = any(e["puerta"] == gate for e in state["pendientes"].values())
+        mark = "✅ Aprobado" if approved else ("⏳ Esperando al usuario" if waiting else "—")
+        when, who = (_local(approved["fecha"]), approved["por"]) if approved else ("", "")
         rows.append(f"| {phase(number).label} | {GATE_LABELS[gate]} | {mark} | {when} | {who} |")
 
     adrs = list_adrs(project)

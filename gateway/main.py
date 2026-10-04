@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, design, jobs, process, progress, quota, runner, sessions, stitch, telegram, vault
+from . import config, design, jobs, palette, process, progress, quota, runner, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -905,7 +905,19 @@ async def request_approval(body: ApprovalIn, x_orc_job: str = Header(default="")
     error = process.validate_gate(body.project, state, gate)
     if error:
         raise HTTPException(409, error)
-    approval_id, replaced = process.request(state, gate, body.summary, chat_id)
+    summary = body.summary
+    swatch = None
+    if gate == "paleta":
+        # La paleta se aprueba viéndola: va una imagen con los colores y sus contrastes.
+        try:
+            colors = await asyncio.to_thread(palette.load, body.project)
+        except palette.PaletteError as exc:
+            raise HTTPException(409, f"La paleta de Diseño/DESIGN.md tiene un problema: {exc}. Pedile a ui que la corrija.") from exc
+        if not colors:
+            raise HTTPException(409, "Diseño/DESIGN.md todavía no tiene la sección «Paleta» con su bloque JSON: delegá en ui.")
+        swatch = await asyncio.to_thread(palette.swatch, colors, f"Paleta · {body.project}")
+        summary = f"{summary}\n\n{palette.summary(colors)}"
+    approval_id, replaced = process.request(state, gate, summary, chat_id)
     for old in replaced:
         if old.get("message_id"):
             with suppress(httpx.HTTPError, telegram.TelegramError):
@@ -913,8 +925,13 @@ async def request_approval(body: ApprovalIn, x_orc_job: str = Header(default="")
                     old["chat_id"], old["message_id"],
                     f"🔁 Este pedido de «{process.gate_label(gate, body.project)}» fue reemplazado por uno nuevo.",
                 )
+    if swatch:
+        try:
+            await bot.send_album(chat_id, [(swatch, f"Paleta propuesta para «{body.project}»")])
+        except (httpx.HTTPError, telegram.TelegramError) as exc:
+            log.error("no pude mandar la imagen de la paleta: %s", exc)
     message_id = await bot.send_buttons(
-        chat_id, _approval_text(body.project, gate, body.summary),
+        chat_id, _approval_text(body.project, gate, summary),
         [[("✅ Aprobar", f"apr:{approval_id}:ok"), ("✏️ Pedir cambios", f"apr:{approval_id}:chg")]],
     )
     state["pendientes"][approval_id]["message_id"] = message_id
@@ -960,6 +977,9 @@ async def start_design(body: DesignIn, x_orc_job: str = Header(default="")) -> d
     blocked = process.check_role(state, "ui")
     if blocked:
         raise HTTPException(409, blocked)
+    problem = await asyncio.to_thread(process.palette_problem, body.project, state)
+    if problem:
+        raise HTTPException(409, f"Antes de generar pantallas, {problem}: así todas usan los mismos colores.")
     try:
         if body.edit:
             if not body.change:

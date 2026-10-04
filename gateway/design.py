@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import stitch, vault
+from . import palette, stitch, vault
 
 log = logging.getLogger("orchestrator.design")
 
@@ -54,8 +54,19 @@ _ALWAYS = (
 )
 
 
-def prompt_for(prompt: str, device: str) -> str:
-    return f"{prompt}\n\n{_DEVICE_HINT[device]} {_ALWAYS}"
+def prompt_for(prompt: str, device: str, colors: str = "") -> str:
+    return f"{prompt}\n\n{_DEVICE_HINT[device]} {_ALWAYS} {colors}".rstrip()
+
+
+def _color_hint(project: str) -> str:
+    """La paleta del proyecto, para que Stitch no invente colores (pasó: el escritorio
+    salió con otro verde que el celular)."""
+    try:
+        colors = palette.load(project)
+    except palette.PaletteError as exc:
+        log.warning("paleta ilegible en %s: %s", project, exc)
+        return ""
+    return palette.stitch_hint(colors) if colors else ""
 
 
 _DEVICE_ALIASES = {
@@ -221,6 +232,7 @@ async def generate(
         screens = [s for s in screens if s.id in only]
     notify = on_screen or (lambda *_: None)
     state = load_state(project)
+    colors = _color_hint(project)
     client = stitch.Stitch()
     rendered: list[Rendered] = []
     errors: list[str] = []
@@ -256,7 +268,7 @@ async def generate(
                 notify(label, "start", "")
                 try:
                     screen = await client.generate(
-                        state["project_id"], prompt_for(spec.prompt, device),
+                        state["project_id"], prompt_for(spec.prompt, device, colors),
                         state.get("design_system"), device,
                     )
                     png, html = await client.files(screen)
@@ -291,6 +303,7 @@ async def edit(
         generated = ", ".join(state["screens"]) or "ninguna"
         raise ValueError(f"La pantalla «{spec_id}» no está generada. Generadas: {generated}.")
     notify = on_screen or (lambda *_: None)
+    colors = _color_hint(project)
     client = stitch.Stitch()
     rendered: list[Rendered] = []
     touched: list[Path] = []
@@ -301,7 +314,7 @@ async def edit(
             try:
                 screen = await client.edit(
                     state["project_id"], version["screen"],
-                    f"{change}\n\n{_DEVICE_HINT[device]} {_ALWAYS}", device,
+                    prompt_for(change, device, colors), device,
                 )
                 png, html = await client.files(screen)
             except stitch.StitchError as exc:

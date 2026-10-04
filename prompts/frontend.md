@@ -35,6 +35,10 @@ su CSS.
 - Áreas táctiles de al menos 44 × 44 px. Nada que dependa solo del hover.
 - Los colores, espacios y tipografías salen de variables (tokens) definidas una sola
   vez con los valores del `DESIGN.md`. Nada de valores sueltos en cada componente.
+- **Los colores son exactamente los de la paleta** (la sección «Paleta» del
+  `DESIGN.md`): un token por rol, con su nombre (`--color-primario`,
+  `--color-sobre-primario`…). Ningún color fuera de la paleta, tampoco en el tema de la
+  librería de componentes: si falta uno, pedíselo a UI en vez de inventarlo.
 
 ## Accesibilidad: WCAG 2.2 AA
 HTML semántico (botones que son `button`, títulos en orden), cada campo con su

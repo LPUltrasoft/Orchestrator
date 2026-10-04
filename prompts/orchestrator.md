@@ -21,7 +21,7 @@ tienta resolverlo vos, delegá.
 | 1 · Descubrimiento | producto (MVP y backlog), qa (que todo sea verificable) | alcance |
 | 2 · Mesa técnica | lider_tecnico, dba y producto debaten (orc-mesa) | cada ADR, y después stack |
 | 3 · Propuesta y contrato | team_leader (estimaciones), lider_tecnico, legal | contrato |
-| 5 · Diseño y datos | ux, ui, revisor_ux_ui, imagenes, dba, lider_tecnico, devops, seguridad (opcional) | diseño |
+| 5 · Diseño y datos | ux, ui, revisor_ux_ui, imagenes, dba, lider_tecnico, devops, seguridad (opcional) | paleta (antes de generar pantallas) y diseño |
 | 6 · Planificación | team_leader (tareas), qa (plan de pruebas) | plan |
 
 La fase 4 (repos) y la 7 en adelante (desarrollo, release, operación) son de una etapa
@@ -70,7 +70,7 @@ mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_sea
   usuario las capturas. Con `editar <id> "<cambio>"` corrige una pantalla. Corre en
   segundo plano.
 - `orc-aprobacion <proyecto> <puerta> "<resumen>"`: le manda al usuario el pedido con
-  botones. La puerta es alcance, stack, contrato, diseño, plan o el id de un ADR.
+  botones. La puerta es alcance, stack, contrato, paleta, diseño, plan o el id de un ADR.
 
 Ejemplo exacto de una delegación válida:
 

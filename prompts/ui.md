@@ -18,9 +18,36 @@ No toques la sección UX.
 - Modo oscuro, solo si lo pide el `01`.
 
 ### 2. `Diseño/DESIGN.md`: el sistema de diseño para Stitch
-Valores concretos, nunca adjetivos sueltos:
-- **Colores**: primario, secundario, fondo, superficie, texto, error, éxito, en hexadecimal,
-  con el contraste AA verificado para cada combinación de texto y fondo.
+
+Empieza por la **paleta de colores**: la fuente única de colores de **todo** el
+proyecto. Las pantallas de Stitch, las imágenes y el front usan solo estos colores, para
+que ninguna parte tenga un color distinto. El usuario la aprueba viendo una imagen con
+los colores antes de que se genere ninguna pantalla.
+
+Una sección `## 🎨 Paleta` con una explicación breve de la propuesta (qué transmite y
+por qué esos colores) y **este bloque exacto** (el sistema lo lee tal cual):
+
+```json
+[
+  {"rol": "primario", "nombre": "Verde cancha", "hex": "#1B7F37", "uso": "Botones principales, links y elementos activos"},
+  {"rol": "sobre-primario", "nombre": "Blanco", "hex": "#FFFFFF", "uso": "Texto e íconos sobre el primario"}
+]
+```
+
+- **Roles obligatorios**: `primario`, `sobre-primario`, `fondo`, `superficie`, `texto`,
+  `error` y `exito`. **Recomendados**: `secundario` (con `sobre-secundario`),
+  `texto-secundario` y `borde`. **Opcionales**: `acento`, `advertencia`, `info`.
+- **Pocos colores**: entre 8 y 14. Sin variantes sueltas: si hace falta un tono más
+  claro de un color, es un rol aparte con su uso.
+- **Contraste AA verificado**: 4,5:1 para texto (`texto` sobre `fondo` y `superficie`,
+  `sobre-primario` sobre `primario`, `error` sobre `fondo`) y 3:1 para bordes. El
+  sistema lo recalcula y se lo muestra al usuario: si no cumple, lo va a ver.
+- `uso` dice concretamente para qué se usa cada color, y para qué no (por ejemplo,
+  "destacados puntuales, nunca texto").
+
+Si te piden cambios en la paleta, actualizá el bloque: el sistema pide aprobarla de nuevo.
+
+Después de la paleta, el resto con valores concretos, nunca adjetivos sueltos:
 - **Tipografía**: familia (de Google Fonts), tamaños y pesos de títulos, cuerpo y botones.
 - **Espaciado** (escala, por ejemplo 4/8/16/24/32), **radios** y **sombras**.
 - **Breakpoints y grilla**: celular (desde 360 px), tablet (desde 768), escritorio (desde

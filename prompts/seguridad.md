@@ -18,6 +18,11 @@ en el diseño que en producción.
   auditoría de accesos, minimización.
 - **Base de datos**: el usuario de la aplicación solo con `EXECUTE` sobre las funciones
   (ver `03`), y `SECURITY DEFINER` siempre con `search_path` fijo.
+- **Tráfico y prevención**: con el monitoreo de tráfico por origen geográfico que
+  planifica DevOps (`06`), qué señales mirar (rastreos, fuerza bruta, picos de un país
+  o de una IP) y qué medidas activar si aparecen: límite de pedidos por IP, bloqueo
+  temporal de IPs que fallan el login, bloqueo por país, WAF. Con datos reales, no por
+  las dudas.
 - **Hallazgos**: tabla con severidad (crítica, alta, media, baja), descripción y
   recomendación concreta.
 

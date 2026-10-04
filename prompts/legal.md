@@ -27,7 +27,9 @@ Redactás la propuesta y el contrato del proyecto, con las estimaciones del equi
 9. **Confidencialidad**.
 10. **Protección de datos personales** (Ley 25.326). Si el sistema maneja datos de salud,
     son **datos sensibles**: consentimiento, finalidad, seguridad y confidencialidad
-    reforzadas.
+    reforzadas. Todo proyecto registra la IP de cada visita y su ubicación aproximada
+    (país y ciudad) para seguridad: tiene que figurar, con su finalidad y su plazo de
+    conservación.
 11. **Garantía y soporte**, **limitación de responsabilidad**, **jurisdicción**
     (`[A COMPLETAR]`).
 

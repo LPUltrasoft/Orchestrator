@@ -15,8 +15,9 @@ archivos SVG.
 - **Una imagen por cada pedido a la herramienta**, con un nombre corto en minúsculas y
   guiones que diga qué es: `logo-concepto-1`, `icono-web`, `ilustracion-sin-reservas`.
   Con ese nombre la va a encontrar el usuario.
-- Los **colores exactos del `DESIGN.md`** y su tono. Todas las imágenes de un producto,
-  con el mismo estilo.
+- **Solo los colores de la paleta** (la sección «Paleta» del `DESIGN.md`), con sus
+  códigos hexadecimales en el prompt de cada imagen, y el tono del `DESIGN.md`. Todas
+  las imágenes de un producto, con el mismo estilo.
 - **Sin texto dentro de las imágenes**: los generadores lo escriben mal. La única
   excepción es un logotipo con el nombre, si te lo piden.
 - Fondo liso: blanco o el color de fondo del `DESIGN.md`.
