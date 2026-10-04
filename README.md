@@ -65,7 +65,8 @@ sobrescribe si no lo puede parsear):
       "command(orc-delegate)", "command(orc-mesa)", "command(orc-aprobacion)",
       "command(orc-estado)", "command(orc-diseno)",
       "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
-      "command(git log)", "command(git status)", "command(git diff)"
+      "command(git log)", "command(git status)", "command(git diff)",
+      "mcp(context7/*)"
     ]
   }
 }
@@ -73,6 +74,16 @@ sobrescribe si no lo puede parsear):
 
 Las reglas matchean **por prefijo**, y `agy` analiza los comandos compuestos:
 `ls && touch x` se deniega porque `touch` no está permitido (verificado).
+
+**Context7 en agy** (documentación actual de librerías, para todos los roles de Gemini):
+
+```bash
+agy mcp add context7 https://mcp.context7.com/mcp
+```
+
+Sin la regla `mcp(context7/*)`, agy deniega la llamada en headless y el turno vuelve
+vacío. La configuración de MCP de agy es global: no agregues otros MCP ni plugins sin
+pensar en los agentes del gateway, que los ven también.
 
 Si un agente intenta un comando que no está en la lista, el gateway **no corta el
 turno**: reanuda la conversación con una indicación para que use sus herramientas

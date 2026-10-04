@@ -65,6 +65,9 @@ def describe(step: dict) -> str | None:
     tool = step.get("tool_name", "")
     params = (step.get("tool_info") or {}).get("parameters") or {}
     if tool == "view_file":
+        # agy lee el esquema de una herramienta de MCP antes de llamarla: no aporta.
+        if "/antigravity-cli/mcp/" in str(params.get("AbsolutePath", "")):
+            return None
         return f"📖 lee {_doc(params, 'AbsolutePath')}"
     if tool == "list_dir":
         return f"📂 mira {_doc(params, 'DirectoryPath', 'AbsolutePath')}"
@@ -79,9 +82,14 @@ def describe(step: dict) -> str | None:
         return _describe_command((params.get("CommandLine") or "").strip())
     if tool in ("search_web", "read_url_content"):
         return "🌐 consulta la web"
-    if tool.startswith("mcp__context7__"):
-        topic = params.get("libraryName") or params.get("query") or ""
+    # Claude nombra las herramientas de MCP mcp__<servidor>__<herramienta>; agy usa
+    # call_mcp_tool con ServerName y Arguments.
+    if tool.startswith("mcp__context7__") or (tool == "call_mcp_tool" and params.get("ServerName") == "context7"):
+        arguments = params.get("Arguments") if isinstance(params.get("Arguments"), dict) else params
+        topic = arguments.get("libraryName") or arguments.get("query") or ""
         return f"📚 consulta la documentación{f' de «{topic[:30]}»' if topic else ''}"
+    if tool == "call_mcp_tool":
+        return f"🔌 usa {params.get('ServerName', 'un MCP')}"
     return f"🔧 {tool}"
 
 

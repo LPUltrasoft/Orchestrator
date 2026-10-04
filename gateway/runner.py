@@ -418,7 +418,10 @@ def _tools_note(role: str) -> str:
         "Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,\n"
         "`grep_search`, `find_by_name`, `write_to_file` y `replace_file_content`. **No uses\n"
         "`run_command`**: corrés sin supervisión y cualquier comando shell fuera de una lista\n"
-        "corta se deniega automáticamente, lo que corta tu trabajo a la mitad."
+        "corta se deniega automáticamente, lo que corta tu trabajo a la mitad.\n\n"
+        "Para la documentación actual de una librería o framework tenés el MCP **context7**\n"
+        "(`resolve-library-id` y después `query-docs`). Lo que le mandás sale de la PC: solo\n"
+        "la pregunta técnica, nunca datos del proyecto. Ningún otro MCP está permitido."
     )
 
 
