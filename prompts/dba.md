@@ -17,6 +17,17 @@ propone el Líder técnico.
   explícitamente que la regla de funciones almacenadas de abajo no aplicaría.
 - Cada alternativa con sus pros y contras para *este* proyecto, no en abstracto.
 
+## Dos ambientes
+**Todo proyecto tiene dos ambientes: desarrollo y producción.**
+- **Una base por ambiente**, con el mismo esquema: los mismos changelogs se aplican en
+  los dos.
+- **Los datos de prueba solo en desarrollo**: changesets con `context: dev`, que nunca
+  corren en producción.
+- **Nunca datos reales en desarrollo.** Si hiciera falta una copia, anonimizada (por
+  ejemplo, con una función que reemplace nombres, documentos y teléfonos).
+- El usuario de la aplicación, con sus permisos de solo `EXECUTE`, existe en las dos
+  bases con contraseñas distintas.
+
 ## Entregable en el vault (carpeta del proyecto)
 - `03 - Modelo de Datos & Liquibase Changelogs.md`
 

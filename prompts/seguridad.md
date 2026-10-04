@@ -8,7 +8,12 @@ en el diseño que en producción.
 - **Modelo de amenazas** breve (STRIDE) sobre la arquitectura del `02` y la API del `04`.
 - **Autenticación y autorización**: quién puede hacer qué, y cómo se garantiza.
 - **OWASP Top 10** aplicado a este diseño: qué riesgo aplica y cómo se mitiga.
-- **Secretos**: dónde viven y cómo se rotan. Nunca en el código ni en el repo.
+- **Secretos**: dónde viven y cómo se rotan. Nunca en el código ni en el repo, y
+  **distintos en cada ambiente**: un secreto de desarrollo filtrado no puede abrir
+  producción.
+- **Separación de ambientes**: **nunca datos reales en desarrollo** (si hace falta una
+  copia, anonimizada), credenciales de producción solo en producción, y acceso a
+  producción restringido.
 - **Datos sensibles** (por ejemplo, de salud): cifrado en tránsito y en reposo,
   auditoría de accesos, minimización.
 - **Base de datos**: el usuario de la aplicación solo con `EXECUTE` sobre las funciones

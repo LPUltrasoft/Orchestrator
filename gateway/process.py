@@ -57,15 +57,17 @@ PHASES = (
           "que terminó, pedí la aprobación de cada ADR (la puerta es su id, por ejemplo "
           "ADR-001) y, con todos aprobados, la aprobación «stack»."),
     Phase(3, "Propuesta y contrato", "⚖️", ("team_leader", "lider_tecnico", "legal"), "contrato", True,
-          "Delegá en team_leader las estimaciones de tiempos y costos (08), en lider_tecnico "
-          "la revisión técnica de esas estimaciones, y en legal la propuesta y el contrato "
-          "(09). Pedí la aprobación «contrato»."),
+          "Delegá en team_leader las estimaciones de tiempos y costos (08), con la "
+          "infraestructura de los dos ambientes por separado; en lider_tecnico la revisión "
+          "técnica de esas estimaciones; y en legal la propuesta y el contrato (09). Pedí la "
+          "aprobación «contrato»."),
     Phase(4, "Repos y esqueleto", "📦", ("devops",), None, False, _NOT_YET),
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "dba", "lider_tecnico", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño y las "
           "pantallas (05, mobile first). Además: dba, el modelo y el catálogo de funciones (03), "
-          "y lider_tecnico, el contrato de la API en OpenAPI (04). Opcional: seguridad revisa "
-          "el diseño (12). Pedí la aprobación «diseño»."),
+          "y lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
+          "entre desarrollo y producción (02). Opcional: seguridad revisa el diseño (12). "
+          "Pedí la aprobación «diseño»."),
     Phase(6, "Planificación", "📌", ("team_leader", "qa"), "plan", True,
           "Delegá en team_leader el plan de trabajo (10) y en qa el plan de pruebas por tarea "
           "(11). Pedí la aprobación «plan»."),
@@ -356,14 +358,16 @@ _MESA_FOCUS = {
         "Proponé el stack: lenguaje y framework del back (Java con Spring, Node con NestJS, "
         "Node con Express, Python con FastAPI u otro), el front (Angular por preferencia del "
         "usuario; otro solo con una razón concreta), la librería de componentes (Angular "
-        "Material, PrimeNG, Spartan u otra) y la infraestructura. Para cada decisión, una "
-        "tabla que compare al menos dos alternativas con criterios explícitos."
+        "Material, PrimeNG, Spartan u otra) y la infraestructura de los dos ambientes que "
+        "tiene todo proyecto: desarrollo (por defecto en la PC del usuario con Docker) y "
+        "producción (dónde corre y cuánto cuesta). Para cada decisión, una tabla que "
+        "compare al menos dos alternativas con criterios explícitos."
     ),
     "dba": (
         "Proponé el motor de base (PostgreSQL por preferencia del usuario; MySQL u otro solo "
         "con una razón concreta; NoSQL solo si el caso lo pide, y Redis como complemento, no "
-        "como reemplazo) y un modelo de datos de alto nivel. Respondé a lo que propuso el "
-        "Líder técnico."
+        "como reemplazo) y un modelo de datos de alto nivel, con una base por ambiente "
+        "(desarrollo y producción). Respondé a lo que propuso el Líder técnico."
     ),
     "producto": (
         "No elijas tecnologías: aportá lo que el negocio necesita que la decisión respete "

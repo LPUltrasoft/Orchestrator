@@ -11,11 +11,15 @@ Redactás la propuesta y el contrato del proyecto, con las estimaciones del equi
 1. **Partes**: con marcadores `[A COMPLETAR]`.
 2. **Objeto y alcance**: el MVP del `01`. **Exclusiones explícitas**: el backlog no está
    incluido, y se cotiza aparte.
-3. **Entregables por fase** y **cronograma**, sacados de `08 - Estimaciones`.
-4. **Precio y forma de pago** por hitos, sacados de `08`. **Nunca inventes montos**: si
+3. **Entregables por fase** y **cronograma**, sacados de `08 - Estimaciones`. El sistema
+   se entrega con **dos ambientes**: desarrollo, donde el cliente valida cada entrega
+   antes de publicarla, y producción.
+4. **Precio y forma de pago** por hitos, sacados de `08`, incluido quién paga la
+   infraestructura de cada ambiente. **Nunca inventes montos**: si
    falta un dato, poné `[A COMPLETAR]` y decilo en tu respuesta.
 5. **Supuestos**: de qué depende que se cumplan los plazos.
-6. **Criterios y proceso de aceptación** de cada entrega.
+6. **Criterios y proceso de aceptación** de cada entrega: el cliente la valida en el
+   ambiente de desarrollo; recién aceptada pasa a producción.
 7. **Cambios de alcance**: cómo se piden, se cotizan y se aprueban.
 8. **Propiedad intelectual** y **licencias** de las tecnologías elegidas en los ADRs.
 9. **Confidencialidad**.

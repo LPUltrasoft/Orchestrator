@@ -146,6 +146,12 @@ cada una (detalle completo en el vault: `05 - Proceso de Desarrollo de Productos
 La fase 4 (repos) y de la 7 en adelante (desarrollo, release, operación) son de la
 etapa 3 del sistema, todavía no implementada.
 
+**Todo proyecto tiene dos ambientes, desarrollo y producción**: el mismo código con
+distinta configuración, una base por ambiente, datos de prueba solo en desarrollo y
+nunca datos reales ahí. A desarrollo se despliega solo; a producción, únicamente con la
+aprobación del usuario (puerta «release»). Los roles lo tienen en sus prompts y el
+detalle está en el vault (documento 05, §7).
+
 **El gateway impone las puertas**, no el orquestador: delegar en un rol de una fase
 futura devuelve 409 con lo que falta aprobar. El estado de cada proyecto vive en el
 vault, en `Estado del Proyecto.md` (legible, con los datos en un bloque JSON al final),

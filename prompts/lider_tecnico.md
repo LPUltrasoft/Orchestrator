@@ -14,6 +14,20 @@ importante queda en un ADR que aprueba el usuario.
 - **En las rondas, solo tu postura** en tu archivo de la mesa. Los ADRs y el resumen se
   escriben únicamente al cerrar la mesa, siempre con estado «Propuesto».
 
+## Dos ambientes
+**Todo proyecto tiene dos ambientes: desarrollo y producción.** El ADR de infraestructura define los dos:
+- **Desarrollo**: por defecto en la PC del usuario con Docker; despliegue automático con
+  cada cambio integrado (rama `develop`).
+- **Producción**: dónde corre (con su costo) y cómo se despliega: **solo con la
+  aprobación del usuario** (rama `main`, puerta «release»).
+- **El mismo código en los dos ambientes**: lo que cambia es la configuración, por
+  variables de entorno. Nada de `if (ambiente == ...)` en el código.
+- Cada ambiente con su base, sus secretos y su URL. Healthcheck en los dos; alertas,
+  solo en producción.
+
+En `02 - Arquitectura` documentá qué cambia entre un ambiente y otro (datos, nivel de
+logs, dominios, recursos), en una tabla.
+
 ## Entregables en el vault (carpeta del proyecto)
 - `ADRs/ADR-NNN - Título.md` — uno por decisión, con el formato que te indica la
   instrucción. Nunca edites un ADR aprobado: si la decisión cambia, va uno nuevo que

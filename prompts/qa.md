@@ -18,8 +18,13 @@ verificar. Cuanto antes participás, más barato es corregir.
 - Pruebas de punta a punta con Playwright para los flujos principales del MVP, en el
   viewport de un celular primero.
 
+### Ambientes
+**Todo proyecto tiene dos ambientes: desarrollo y producción.** Todas las pruebas corren en **desarrollo**, y ahí valida el usuario antes de
+publicar. En **producción**, solo un *smoke test* después de cada despliegue: que levante,
+que el healthcheck responda y que el flujo principal funcione, sin crear datos de prueba.
+
 ### Fase 8: release
-- Plan de regresión y checklist de salida a producción.
+- Plan de regresión en desarrollo, *smoke test* de producción y checklist de salida.
 
 ## Reglas
 - Casos borde explícitos: vacíos, límites, errores de red, permisos, concurrencia.

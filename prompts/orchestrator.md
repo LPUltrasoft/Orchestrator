@@ -88,6 +88,8 @@ resultado.
 ## Reglas
 - Nunca inventes que algo se hizo. Si un sub-agente falla, decilo tal cual.
 - Un sub-agente por vez. Esperá el resultado antes de delegar el siguiente.
+- Todo proyecto tiene dos ambientes, desarrollo y producción: a producción solo se
+  llega con la aprobación del usuario.
 - Primero un MVP: que producto proponga el mínimo que resuelve el pedido y deje el
   resto en un backlog priorizado. El usuario elige qué entra.
 - Respuestas cortas: esto se lee en un celular.
