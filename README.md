@@ -56,7 +56,8 @@ sobrescribe si no lo puede parsear):
 {
   "permissions": {
     "allow": [
-      "command(orc-delegate)",
+      "command(orc-delegate)", "command(orc-mesa)", "command(orc-aprobacion)",
+      "command(orc-estado)",
       "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
       "command(git log)", "command(git status)", "command(git diff)"
     ]
@@ -129,21 +130,79 @@ pasos de cada sub-agente se suman al mensaje correcto.
 Si mandás un mensaje mientras otro se procesa, queda en cola ("📥 Lo anoto") y se
 atiende después: dos turnos en paralelo sobre la misma conversación se pisarían.
 
-## Sub-agentes
+## El proceso y los roles
 
-| Rol | Escribe en el vault | Modelo |
-|-----|---------------------|--------|
-| orquestador | — (delega) | `gemini-3.8-flash-high` |
-| `producto` | `00 - Índice`, `01 - Requerimientos` | `gemini-3.8-flash-high` |
-| `dba` | `03 - Modelo de Datos` | `gemini-3.1-pro-high` |
-| `nestjs` | `02 - Arquitectura`, `04 - API REST` | `gemini-3.1-pro-high` |
+Los proyectos nuevos siguen un proceso por fases, con aprobación del usuario al cerrar
+cada una (detalle completo en el vault: `05 - Proceso de Desarrollo de Productos`):
 
-**Solo el orquestador puede delegar.** El gateway marca quién invoca cada `agy` en
-`ORC_CALLER`, y `orc-delegate` se niega si lo llama un sub-agente.
+| Fase | Quién trabaja | Puerta |
+|------|---------------|--------|
+| 1 · Descubrimiento | producto, qa | alcance |
+| 2 · Mesa técnica | lider_tecnico, dba, producto (por rondas) | cada ADR, y stack |
+| 3 · Propuesta y contrato | team_leader, lider_tecnico, legal | contrato |
+| 5 · Diseño y datos | ux, ui, dba, lider_tecnico, seguridad | diseño |
+| 6 · Planificación | team_leader, qa | plan |
 
-Los roles se definen en `prompts/*.md`. Para agregar uno: `prompts/<rol>.md`, sumarlo
-a `ROLES` y `MODELS` en `gateway/config.py`, y mencionarlo en
-`prompts/orchestrator.md`.
+La fase 4 (repos) y de la 7 en adelante (desarrollo, release, operación) son de la
+etapa 3 del sistema, todavía no implementada.
+
+**El gateway impone las puertas**, no el orquestador: delegar en un rol de una fase
+futura devuelve 409 con lo que falta aprobar. El estado de cada proyecto vive en el
+vault, en `Estado del Proyecto.md` (legible, con los datos en un bloque JSON al final),
+y cada cambio se commitea. Los proyectos anteriores al proceso no tienen ese archivo y
+trabajan sin fases.
+
+| Rol | Escribe | Modelo |
+|-----|---------|--------|
+| orquestador | — (coordina) | `gemini-3.8-flash-high` |
+| `producto` | 00 visión, 01 requerimientos con MVP y backlog | `gemini-3.8-flash-high` |
+| `qa` | 11 plan de pruebas | `gemini-3.8-flash-high` |
+| `lider_tecnico` | ADRs, 02 arquitectura, 04 API (OpenAPI) | `gemini-3.1-pro-high` |
+| `dba` | 03 modelo y funciones almacenadas | `gemini-3.1-pro-high` |
+| `legal` | 09 propuesta y contrato (borrador) | `gemini-3.1-pro-high` |
+| `team_leader` | 08 estimaciones, 10 plan de trabajo | `gemini-3.8-flash-high` |
+| `ux` | 05, sección UX | `gemini-3.8-flash-high` |
+| `ui` | 05, sección UI | `gemini-3.8-flash-high` |
+| `seguridad` | 12 revisión de seguridad | `gemini-3.1-pro-high` |
+| `nestjs` | Desarrollo backend (etapa 3) | `gemini-3.1-pro-high` |
+
+Cada modelo se cambia con `MODEL_<ROL>` en el `.env`.
+
+### Comandos del orquestador
+
+| Comando | Qué hace |
+|---------|----------|
+| `orc-estado <proyecto>` | Fase, qué hacer ahora, qué espera al usuario |
+| `orc-delegate <rol> <proyecto> "<instrucción>"` | Delega y espera el resultado |
+| `orc-mesa <proyecto> "<tema>" [rondas]` | Convoca la mesa técnica, en segundo plano |
+| `orc-aprobacion <proyecto> <puerta> "<resumen>"` | Le manda al usuario el pedido con botones |
+
+Todos tienen `--help` y comparten `bin/_orc_common.sh`. **Solo el orquestador puede
+usarlos**: el gateway marca quién invoca cada `agy` en `ORC_CALLER`.
+
+### Aprobaciones con botones
+
+`orc-aprobacion` manda un mensaje con **✅ Aprobar** y **✏️ Pedir cambios**:
+
+- **Aprobar:** el mensaje queda marcado con quién y cuándo, el proyecto avanza de fase
+  (o el ADR queda marcado como aprobado en su archivo) y el gateway despierta al
+  orquestador con un "(Mensaje del sistema)" que dice qué hacer ahora.
+- **Pedir cambios:** el próximo mensaje del usuario le llega al orquestador como los
+  cambios pedidos, para que los delegue y vuelva a pedir la aprobación.
+- Un pedido nuevo de la misma puerta reemplaza al anterior; un botón viejo responde
+  "ya no está vigente".
+
+### La mesa técnica
+
+`orc-mesa` corre las rondas en el gateway, no en el turno del orquestador (un debate de
+diez minutos no entra en su timeout). Cada participante escribe su postura en un
+archivo propio de `Mesa Técnica/NN - tema/`, así nadie pisa la de otro. El Líder técnico
+cierra con un `Resumen.md` y los ADRs, siempre "Propuesto". Al terminar, el gateway
+despierta al orquestador para que pida la aprobación de cada uno. Se pausa por cuota
+como cualquier otro trabajo y retoma desde el paso donde quedó.
+
+Para agregar un rol: `prompts/<rol>.md`, sumarlo a `_DEFAULT_MODELS` en
+`gateway/config.py`, a las fases de `gateway/process.py` y al prompt del orquestador.
 
 ## API del gateway
 
@@ -153,7 +212,10 @@ Todo pide el header `X-Orc-Token`, menos `/health`. Solo escucha en `127.0.0.1`.
 |--------|------|----------|
 | `GET` | `/health` | Estado, problemas de configuración, trabajos en vuelo |
 | `POST` | `/chat` | Mensaje por HTTP (pruebas) → `202 {job_id}` |
-| `POST` | `/agents/{rol}` | Invocar un sub-agente directo (síncrono) |
+| `POST` | `/agents/{rol}` | Invocar un sub-agente directo (síncrono; respeta las fases) |
+| `POST` | `/aprobaciones` | Pedido de aprobación con botones (`orc-aprobacion`) |
+| `POST` | `/mesa` | Convocar la mesa técnica (`orc-mesa`) |
+| `GET` | `/proyectos/{proyecto}/estado` | Fase y qué sigue (`orc-estado`) |
 | `GET` | `/jobs/{id}` | Estado de un trabajo |
 | `POST` | `/sessions/{chat_id}/reset` | Borrar la memoria de ese chat |
 | `GET` | `/projects` | Proyectos en el vault |

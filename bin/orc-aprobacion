@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Le pide al usuario que apruebe algo, con botones en Telegram.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+orc-aprobacion — le manda al usuario un pedido de aprobación con dos botones:
+"✅ Aprobar" y "✏️ Pedir cambios".
+
+USO
+  orc-aprobacion <proyecto> <puerta> "<resumen>"
+
+PUERTAS
+  alcance    Fase 1: MVP y backlog.
+  stack      Fase 2: stack técnico (con todos los ADRs ya aprobados).
+  contrato   Fase 3: estimaciones, propuesta y contrato.
+  diseño     Fase 5: UX, UI, modelo de datos y contrato de la API.
+  plan       Fase 6: plan de trabajo y plan de pruebas.
+  ADR-NNN    Un ADR puntual, por ejemplo ADR-003.
+
+  "<resumen>"  Lo que el usuario necesita para decidir, en 3 a 8 líneas de texto plano:
+               qué se propone, por qué, y qué documentos mirar.
+
+EJEMPLO
+  orc-aprobacion "App de Turnos" ADR-002 "Front en Angular con Angular Material: cubre todos los componentes del MVP, es accesible y es la preferencia del usuario. PrimeNG tiene más componentes pero pesa más. Detalle en ADRs/ADR-002."
+
+SALIDA
+  JSON con status "enviado". Terminá tu turno: el usuario responde con los botones y el
+  sistema te avisa con un mensaje. Si pide cambios, te llegan sus cambios.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 3 ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-aprobacion
+PROJECT="$1"; GATE="$2"; shift 2
+orc_post "/aprobaciones" "$(orc_json "project=$PROJECT" "gate=$GATE" "summary=$*")"

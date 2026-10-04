@@ -17,7 +17,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, jobs, progress, quota, runner, sessions, telegram, vault
+from . import config, jobs, process, progress, quota, runner, sessions, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -72,6 +72,20 @@ class DelegateIn(BaseModel):
     instruction: str = Field(min_length=1)
 
 
+class ApprovalIn(BaseModel):
+    project: str = Field(min_length=1)
+    gate: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    chat_id: str | None = None  # sin X-Orc-Job: pruebas o uso manual
+
+
+class MesaIn(BaseModel):
+    project: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+    rounds: int = Field(default=2, ge=1, le=3)
+    chat_id: str | None = None
+
+
 def auth(x_orc_token: str = Header(default="")) -> None:
     if not config.TOKEN:
         raise HTTPException(503, "GATEWAY_TOKEN no configurado en el gateway")
@@ -87,7 +101,7 @@ def _orchestrator_prompt(body: ChatIn, is_new: bool) -> str:
     if not is_new:
         return body.text
     known = vault.list_projects()
-    listing = "\n".join(f"- {p}" for p in known) if known else "- (todavía no hay ninguno)"
+    listing = "\n".join(f"- {process.summary_line(p)}" for p in known) if known else "- (todavía no hay ninguno)"
     return f"""{config.prompt_for("orchestrator")}
 
 ---
@@ -161,6 +175,7 @@ async def _pause(
     from_name: str | None,
     low: list[quota.Window],
     label: str | None = None,
+    extra: dict | None = None,
 ) -> None:
     """Guarda el pedido para cuando se renueve la cuota y avisa."""
     until = quota.resume_at(low)
@@ -174,6 +189,7 @@ async def _pause(
         "resume_at": until.isoformat(),
         # Lo que ve el usuario en los avisos; el texto puede ser una instrucción interna.
         "label": label,
+        **(extra or {}),
     }
     _save_paused([*entries, entry])
     log.warning("pausa por cuota para el chat %s hasta %s", chat_id, until.isoformat())
@@ -224,7 +240,10 @@ async def _resume_later(entry: dict) -> None:
     )
     # _start_job es síncrono y el lock por chat es FIFO: se ejecutan en este orden.
     for e in due:
-        _start_job(ChatIn(chat_id=e["chat_id"], text=e["text"], from_name=e.get("from_name")))
+        if e.get("kind") == "mesa":
+            _start_mesa(e["chat_id"], e["project"], e["topic"], e["folder"], e["rounds"], e["step"])
+        else:
+            _start_job(ChatIn(chat_id=e["chat_id"], text=e["text"], from_name=e.get("from_name")))
 
 
 async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
@@ -290,13 +309,12 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
             )
 
 
-def _start_job(body: ChatIn) -> tuple[str, bool]:
-    """Lanza un turno del orquestador. Devuelve (job_id, quedó_en_cola)."""
-    chat_id = body.chat_id
-    queued = _pending[chat_id] > 0
-    _pending[chat_id] += 1
-    job_id = jobs.create("orchestrator", {"chat_id": chat_id, "text": body.text[:500]})
-    task = asyncio.create_task(_run_orchestrator(job_id, body))
+def _chat_for(job_id: str) -> str | None:
+    job = jobs.get(job_id) if job_id else None
+    return job["payload"].get("chat_id") if job else None
+
+
+def _track(chat_id: str, task: asyncio.Task) -> None:
     _inflight.add(task)
 
     def _done(finished: asyncio.Task) -> None:
@@ -304,6 +322,106 @@ def _start_job(body: ChatIn) -> tuple[str, bool]:
         _pending[chat_id] -= 1
 
     task.add_done_callback(_done)
+
+
+def _start_mesa(chat_id: str, project: str, topic: str, folder: str, rounds: int, step: int = 0) -> str:
+    _pending[chat_id] += 1
+    job_id = jobs.create("mesa", {"chat_id": chat_id, "text": f"mesa técnica: {topic}", "project": project})
+    _track(chat_id, asyncio.create_task(_run_mesa(job_id, chat_id, project, topic, folder, rounds, step)))
+    return job_id
+
+
+async def _run_mesa(
+    job_id: str, chat_id: str, project: str, topic: str, folder: str, rounds: int, start: int
+) -> None:
+    """Las rondas de la mesa, una detrás de otra. Corre en el gateway y no en el turno
+    del orquestador: un debate de diez minutos no entra en su timeout."""
+    async with _chat_locks[chat_id]:
+        plan = process.mesa_plan(rounds)
+        live = progress.Progress(bot, chat_id, title=f"🏛️ Mesa técnica: {topic}") if bot else None
+        typing = asyncio.create_task(_keep_typing(chat_id)) if bot else None
+        if live:
+            _progress[job_id] = live
+            await live.start(with_director=False)
+        ok = paused = False
+        index = start
+        text = None
+        try:
+            # La carpeta la crea el gateway: un agente que intenta `mkdir` choca con la
+            # allowlist y gasta un reintento (pasó en la prueba de punta a punta).
+            await asyncio.to_thread(
+                (vault.project_path(project) / folder).mkdir, parents=True, exist_ok=True
+            )
+            before = {a["id"] for a in await asyncio.to_thread(process.list_adrs, project)}
+            for index in range(start, len(plan)):
+                step = plan[index]
+                low = await quota.exhausted([config.MODELS[step.role]], force=True)
+                if low:
+                    paused = True
+                    await _pause(
+                        chat_id, "", None, low,
+                        label=f"continuar: mesa técnica «{topic}» (paso {index + 1} de {len(plan)})",
+                        extra={"kind": "mesa", "project": project, "topic": topic,
+                               "folder": folder, "rounds": rounds, "step": index},
+                    )
+                    jobs.finish(job_id, result={"paused_at_step": index})
+                    return
+                stage = "cierre" if step.closing else f"ronda {step.round}"
+                if live:
+                    live.section(step.role, f"{project} · {stage}")
+                before_step = await asyncio.to_thread(process.adr_names, project)
+                try:
+                    result = await runner.invoke_subagent(
+                        step.role, project, process.mesa_instruction(step, topic, folder, rounds),
+                        on_step=(lambda s, r=step.role: live.step(r, s)) if live else None,
+                    )
+                except (ValueError, RuntimeError) as exc:
+                    if live:
+                        live.agent_done(step.role, False, f"⚠️ {str(exc)[:120]}")
+                    raise
+                note = ""
+                if not step.closing:
+                    moved = await asyncio.to_thread(
+                        process.quarantine_premature_adrs, project, folder, before_step
+                    )
+                    if moved:
+                        log.warning("mesa %s: %s escritos antes del cierre, pasan a borrador", job_id, moved)
+                        note = f" · {len(moved)} ADR antes de tiempo → borrador"
+                if live:
+                    files = result.get("files_changed") or []
+                    live.agent_done(
+                        step.role, True,
+                        f"escribió {len(files)} archivo{'s' if len(files) != 1 else ''}{note}",
+                    )
+            adrs = [a for a in await asyncio.to_thread(process.list_adrs, project) if a["id"] not in before]
+            ok = True
+            jobs.finish(job_id, result={"adrs": [a["id"] for a in adrs]})
+            text = process.after_mesa_text(project, topic, folder, adrs)
+        except Exception as exc:  # noqa: BLE001 - la mesa nunca debe morir en silencio
+            log.exception("la mesa %s falló", job_id)
+            jobs.finish(job_id, error=str(exc))
+            text = (
+                f"(Mensaje del sistema) La mesa técnica «{topic}» de «{project}» falló en el "
+                f"paso {index + 1} de {len(plan)}: {exc}. Avisale al usuario y proponé cómo seguir."
+            )
+        finally:
+            if typing:
+                typing.cancel()
+            if live:
+                await live.finish(ok, paused=paused)
+                _progress.pop(job_id, None)
+        # Despierta al orquestador (espera el lock del chat: corre después de esto).
+        if text:
+            _start_job(ChatIn(chat_id=chat_id, text=text))
+
+
+def _start_job(body: ChatIn) -> tuple[str, bool]:
+    """Lanza un turno del orquestador. Devuelve (job_id, quedó_en_cola)."""
+    chat_id = body.chat_id
+    queued = _pending[chat_id] > 0
+    _pending[chat_id] += 1
+    job_id = jobs.create("orchestrator", {"chat_id": chat_id, "text": body.text[:500]})
+    _track(chat_id, asyncio.create_task(_run_orchestrator(job_id, body)))
     return job_id, queued
 
 
@@ -317,6 +435,60 @@ def _running_for(chat_id: str) -> list[dict]:
     ]
 
 
+def _approval_text(project: str, gate: str, summary: str) -> str:
+    head = f"⛩ Aprobación pendiente · {project}\n{process.gate_label(gate, project)}"
+    if gate in process.GATES:
+        number = process.GATES[gate]
+        head += f" (cierra la fase {process.phase(number).label})"
+    return f"{head}\n\n{summary}"
+
+
+async def _on_telegram_callback(
+    chat_id: str, from_name: str | None, data: str, message_id: int, callback_id: str
+) -> None:
+    if not config.chat_allowed(chat_id):
+        await bot.answer_callback(callback_id)
+        return
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "apr" or parts[2] not in ("ok", "chg"):
+        await bot.answer_callback(callback_id, "Botón desconocido")
+        return
+    _, approval_id, action = parts
+    found = await asyncio.to_thread(process.find_pending, approval_id)
+    if not found:
+        await bot.answer_callback(callback_id, "Este pedido ya no está vigente")
+        return
+    project, state, entry = found
+    by = from_name or "el usuario"
+    original = _approval_text(project, entry["puerta"], entry["resumen"])
+    stamp = datetime.now().astimezone().strftime("%d/%m %H:%M")
+
+    if action == "ok":
+        try:
+            gate, advanced = await asyncio.to_thread(process.approve, project, state, approval_id, by)
+            event = f"{gate} aprobado por {by}" + (f"; pasa a la fase {advanced}" if advanced else "")
+            await asyncio.to_thread(process.save, project, state, event)
+        except Exception as exc:  # noqa: BLE001 - el usuario tiene que saber que no se registró
+            log.exception("no pude registrar la aprobación %s", approval_id)
+            await bot.answer_callback(callback_id, "⚠️ No se pudo registrar")
+            await bot.send(chat_id, f"⚠️ No pude registrar la aprobación de «{entry['puerta']}»: {exc}")
+            return
+        await bot.answer_callback(callback_id, "✅ Aprobado")
+        await bot.edit(chat_id, message_id, f"{original}\n\n✅ Aprobado por {by} · {stamp}")
+        _start_job(ChatIn(
+            chat_id=chat_id, from_name=from_name,
+            text=process.after_approval_text(project, state, gate, by, advanced),
+        ))
+    else:
+        entry["esperando_cambios"] = True
+        await asyncio.to_thread(process.save, project, state, f"{entry['puerta']}: pidió cambios")
+        await bot.answer_callback(callback_id, "Escribime qué querés cambiar")
+        await bot.edit(
+            chat_id, message_id,
+            f"{original}\n\n✏️ Pediste cambios · {stamp}\nEscribime cuáles en tu próximo mensaje.",
+        )
+
+
 async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | None) -> None:
     if not config.chat_allowed(chat_id):
         # A un extraño no se le contesta nada: ni siquiera que el bot existe.
@@ -327,6 +499,19 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
         return
 
     command = text.strip().split()[0].lower().split("@")[0]
+    if not command.startswith("/"):
+        waiting = await asyncio.to_thread(process.waiting_changes, chat_id)
+        if waiting:
+            project, state, approval_id, entry = waiting
+            state["pendientes"].pop(approval_id, None)
+            await asyncio.to_thread(process.save, project, state, f"{entry['puerta']}: cambios pedidos")
+            _, queued = _start_job(ChatIn(
+                chat_id=chat_id, from_name=from_name,
+                text=process.changes_text(project, entry["puerta"], text),
+            ))
+            if queued:
+                await bot.send(chat_id, "📥 Lo anoto: termino lo anterior y sigo con tus cambios.")
+            return
     if command in ("/start", "/ayuda", "/help"):
         await bot.send(chat_id, HELP_TEXT)
     elif command == "/reset":
@@ -351,6 +536,11 @@ async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | 
             await bot.send(chat_id, f"En curso ({len(running)}):\n{lines}")
         if not running and not paused:
             await bot.send(chat_id, "No hay nada en curso.")
+        staged = await asyncio.to_thread(process.projects_with_state)
+        if staged:
+            await bot.send(chat_id, "📍 Proyectos:\n" + "\n".join(
+                f"- {process.summary_line(name)}" for name, _ in staged
+            ))
     else:
         _, queued = _start_job(ChatIn(chat_id=chat_id, text=text, from_name=from_name))
         if queued:
@@ -398,7 +588,7 @@ async def lifespan(_: FastAPI):
     poller = None
     if config.TELEGRAM_BOT_TOKEN:
         bot = telegram.TelegramBot(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_API_BASE)
-        poller = asyncio.create_task(bot.poll_forever(_on_telegram_message))
+        poller = asyncio.create_task(bot.poll_forever(_on_telegram_message, _on_telegram_callback))
 
     yield
 
@@ -469,6 +659,15 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
     live = _progress.get(x_orc_job)
     if live:
         live.section(role, body.project)
+    try:
+        state = await asyncio.to_thread(process.ensure, body.project)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    blocked = process.check_role(state, role)
+    if blocked:
+        if live:
+            live.agent_done(role, False, "⛔ todavía no es su fase")
+        raise HTTPException(409, blocked)
     low = await quota.exhausted([config.MODELS[role]], force=True)
     if low:
         until = quota.resume_at(low)
@@ -504,6 +703,70 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
             if files else "no escribió archivos",
         )
     return result
+
+
+@app.post("/aprobaciones", dependencies=[Depends(auth)])
+async def request_approval(body: ApprovalIn, x_orc_job: str = Header(default="")) -> dict:
+    """Le manda al usuario un pedido de aprobación con botones. Lo usa `orc-aprobacion`."""
+    if not bot:
+        raise HTTPException(503, "las aprobaciones necesitan el bot de Telegram")
+    chat_id = _chat_for(x_orc_job) or body.chat_id
+    if not chat_id:
+        raise HTTPException(400, "no sé a qué chat mandar la aprobación")
+    gate = process.normalize_gate(body.gate)
+    state = await asyncio.to_thread(process.load, body.project)
+    error = process.validate_gate(body.project, state, gate)
+    if error:
+        raise HTTPException(409, error)
+    approval_id, replaced = process.request(state, gate, body.summary, chat_id)
+    for old in replaced:
+        if old.get("message_id"):
+            with suppress(httpx.HTTPError, telegram.TelegramError):
+                await bot.edit(
+                    old["chat_id"], old["message_id"],
+                    f"🔁 Este pedido de «{process.gate_label(gate, body.project)}» fue reemplazado por uno nuevo.",
+                )
+    message_id = await bot.send_buttons(
+        chat_id, _approval_text(body.project, gate, body.summary),
+        [[("✅ Aprobar", f"apr:{approval_id}:ok"), ("✏️ Pedir cambios", f"apr:{approval_id}:chg")]],
+    )
+    state["pendientes"][approval_id]["message_id"] = message_id
+    await asyncio.to_thread(process.save, body.project, state, f"pedido de aprobación: {gate}")
+    return {
+        "id": approval_id,
+        "status": "enviado",
+        "siguiente": "Terminá tu turno: el usuario responde con los botones y el sistema te avisa.",
+    }
+
+
+@app.post("/mesa", dependencies=[Depends(auth)], status_code=202)
+async def start_mesa(body: MesaIn, x_orc_job: str = Header(default="")) -> dict:
+    """Convoca la mesa técnica. Corre en background; al terminar despierta al orquestador."""
+    chat_id = _chat_for(x_orc_job) or body.chat_id
+    if not chat_id:
+        raise HTTPException(400, "no sé en qué chat mostrar la mesa")
+    state = await asyncio.to_thread(process.load, body.project)
+    if state is None:
+        raise HTTPException(409, f"«{body.project}» es anterior al proceso: no tiene mesa técnica.")
+    if state["fase"] < 2:
+        raise HTTPException(409, process.check_role(state, "lider_tecnico"))
+    folder = process.mesa_folder(body.project, body.topic)
+    steps = len(process.mesa_plan(body.rounds))
+    _start_mesa(chat_id, body.project, body.topic, folder, body.rounds)
+    return {
+        "status": "iniciada",
+        "carpeta": folder,
+        "pasos": steps,
+        "siguiente": "Terminá tu turno: el usuario ve el progreso y el sistema te despierta al terminar.",
+    }
+
+
+@app.get("/proyectos/{project}/estado", dependencies=[Depends(auth)])
+async def project_status(project: str) -> dict:
+    try:
+        return {"proyecto": project, "estado": await asyncio.to_thread(process.status_text, project)}
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(auth)])

@@ -251,6 +251,29 @@ def build_subagent_prompt(role: str, project: str, instruction: str, project_pat
 
 Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 
+# Documentos del proyecto
+
+| Documento | Lo escribe |
+|-----------|------------|
+| 00 - Índice & Visión General del Proyecto | Producto |
+| 01 - Requerimientos Funcionales y Reglas de Negocio | Producto |
+| 02 - Arquitectura del Sistema & Stack Tecnológico | Líder técnico |
+| 03 - Modelo de Datos & Liquibase Changelogs | DBA |
+| 04 - Especificación API REST & Contratos de Integración | Líder técnico |
+| 05 - Frontend & Experiencia de Usuario (UI-UX) | UX y UI |
+| 06 - DevOps, Docker & CI-CD | DevOps |
+| 08 - Estimaciones | Team leader |
+| 09 - Propuesta y Contrato | Legal |
+| 10 - Plan de Trabajo | Team leader |
+| 11 - Plan de Pruebas | QA |
+| 12 - Revisión de Seguridad | Seguridad |
+| ADRs/ADR-NNN - Título.md | Líder técnico |
+| Mesa Técnica/ | Los participantes de la mesa |
+
+Escribí solo los documentos de tu rol y leé los demás como contexto. Si tu documento ya
+existe, actualizalo en vez de duplicarlo. **Nunca edites «Estado del Proyecto.md»** (lo
+mantiene el sistema) **ni un ADR aprobado** (si una decisión cambia, va un ADR nuevo).
+
 # Herramientas
 
 Trabajá solo con tus herramientas nativas de archivos: `list_dir`, `view_file`,

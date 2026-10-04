@@ -50,14 +50,27 @@ ALLOWED_CHAT_IDS = {
     c.strip() for c in os.environ.get("ALLOWED_CHAT_IDS", "").split(",") if c.strip()
 }
 
+# Modelo por rol (solo Gemini dentro de agy, por decisión del usuario). Cada uno se
+# puede cambiar con MODEL_<ROL> en el .env: MODEL_LIDER_TECNICO=...
+_DEFAULT_MODELS = {
+    "orchestrator": "gemini-3.8-flash-high",
+    "producto": "gemini-3.8-flash-high",
+    "qa": "gemini-3.8-flash-high",
+    "lider_tecnico": "gemini-3.1-pro-high",
+    "dba": "gemini-3.1-pro-high",
+    "legal": "gemini-3.1-pro-high",
+    "team_leader": "gemini-3.8-flash-high",
+    "ux": "gemini-3.8-flash-high",
+    "ui": "gemini-3.8-flash-high",
+    "seguridad": "gemini-3.1-pro-high",
+    "nestjs": "gemini-3.1-pro-high",
+}
 MODELS = {
-    "orchestrator": os.environ.get("MODEL_ORCHESTRATOR", "gemini-3.8-flash-high"),
-    "producto": os.environ.get("MODEL_PRODUCTO", "gemini-3.8-flash-high"),
-    "dba": os.environ.get("MODEL_DBA", "gemini-3.1-pro-high"),
-    "nestjs": os.environ.get("MODEL_NESTJS", "gemini-3.1-pro-high"),
+    role: os.environ.get(f"MODEL_{role.upper()}", default)
+    for role, default in _DEFAULT_MODELS.items()
 }
 
-ROLES = ("producto", "dba", "nestjs")
+ROLES = tuple(role for role in MODELS if role != "orchestrator")
 
 # Modelos que agy ofrece hoy. Se llena al arrancar: Antigravity retira modelos sin
 # aviso (Sonnet 4.6 desapareció entre septiembre y octubre de 2026).

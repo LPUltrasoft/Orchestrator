@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Muestra la fase de un proyecto, qué sigue y qué falta aprobar.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+orc-estado — fase actual de un proyecto, qué hacer ahora, qué está aprobado y qué
+espera al usuario.
+
+USO
+  orc-estado <proyecto>
+
+Usalo antes de delegar en un proyecto nuevo del proceso: la fase decide qué roles
+pueden trabajar.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 1 ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-estado
+PROJECT_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")
+orc_get "/proyectos/$PROJECT_ENC/estado" | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d.get("estado") or d)'

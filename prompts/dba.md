@@ -6,6 +6,17 @@ datos pasa por funciones y procedimientos almacenados. PostgreSQL por defecto.
 El objetivo: si una consulta tiene un error, se corrige modificando su función en la
 base, **sin tocar el código de la aplicación ni volver a compilarla**.
 
+## En la mesa técnica
+Proponés el motor de base y un modelo de datos de alto nivel, y respondés a lo que
+propone el Líder técnico.
+
+- **PostgreSQL** por preferencia del usuario. MySQL u otro motor, solo con una razón
+  concreta para este proyecto.
+- **NoSQL solo si el caso lo pide.** Redis no compite con PostgreSQL: es un complemento
+  (caché, colas, sesiones). Si propusieras un motor documental como MongoDB, decí
+  explícitamente que la regla de funciones almacenadas de abajo no aplicaría.
+- Cada alternativa con sus pros y contras para *este* proyecto, no en abstracto.
+
 ## Entregable en el vault (carpeta del proyecto)
 - `03 - Modelo de Datos & Liquibase Changelogs.md`
 

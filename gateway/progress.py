@@ -23,7 +23,14 @@ log = logging.getLogger("orchestrator.progress")
 AGENTS = {
     "orchestrator": "🧭 Director",
     "producto": "📋 Producto",
+    "qa": "🧪 QA",
+    "lider_tecnico": "🏛️ Líder técnico",
     "dba": "🗄️ DBA",
+    "legal": "⚖️ Legal",
+    "team_leader": "📌 Team leader",
+    "ux": "🧩 UX",
+    "ui": "🎨 UI",
+    "seguridad": "🛡️ Seguridad",
     "nestjs": "🧱 NestJS",
 }
 MAX_ACTIONS = 4  # acciones visibles por agente: el mensaje tiene que entrar en pantalla
@@ -88,6 +95,13 @@ def _describe_command(command: str) -> str | None:
         return f"↪ delega en {AGENTS[role]}" if role in AGENTS else None
     if name == "which":
         return None
+    if name == "orc-mesa":
+        return "🏛️ convoca la mesa técnica"
+    if name == "orc-aprobacion":
+        gate = args[1] if len(args) > 1 else ""
+        return f"⛩ te pide aprobar {gate}".rstrip()
+    if name == "orc-estado":
+        return "📍 mira el estado del proyecto"
     if name == "ls":
         return f"📂 mira {target or 'la carpeta'}"
     if name in ("cat", "head"):
@@ -111,12 +125,16 @@ class Section:
 
 
 class Progress:
-    def __init__(self, bot: telegram.TelegramBot, chat_id: str) -> None:
+    def __init__(
+        self, bot: telegram.TelegramBot, chat_id: str, title: str | None = None
+    ) -> None:
         self.bot = bot
         self.chat_id = chat_id
+        self.title = title
         self.started = time.monotonic()
         self.finished: float | None = None
         self.ok = True
+        self.paused = False
         self.sections: list[Section] = []
         self._message_id: int | None = None
         self._last_text = ""
@@ -157,13 +175,15 @@ class Progress:
 
     # ── ciclo de vida ────────────────────────────────────────────────────────
 
-    async def start(self) -> None:
-        self.section("orchestrator")
+    async def start(self, with_director: bool = True) -> None:
+        if with_director:
+            self.section("orchestrator")
         await self._render()
         self._loop_task = asyncio.create_task(self._loop())
 
-    async def finish(self, ok: bool) -> None:
+    async def finish(self, ok: bool, paused: bool = False) -> None:
         self.ok = ok
+        self.paused = paused
         self.finished = time.monotonic()
         for section in self.sections:
             if section.finished is None:
@@ -182,13 +202,19 @@ class Progress:
         total = _clock((self.finished or now) - self.started)
         if self.finished is None:
             lines = [f"⏳ Trabajando… {total}"]
+        elif self.paused:
+            lines = [f"⏸️ En pausa por cuota a los {total}"]
         elif self.ok:
             lines = [f"✅ Listo en {total}"]
         else:
             lines = [f"⚠️ Terminó con error a los {total}"]
+        if self.title:
+            lines.insert(0, self.title)
 
         for section in self.sections:
             icon = "⏳" if section.finished is None else ("✅" if section.ok else "⚠️")
+            if self.paused and section.finished == self.finished:
+                icon = "⏸️"
             title = f"{icon} {AGENTS.get(section.agent, section.agent)}"
             if section.project:
                 title += f" · {section.project}"

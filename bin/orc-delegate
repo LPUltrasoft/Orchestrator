@@ -11,9 +11,19 @@ USO
   orc-delegate <rol> <proyecto> "<instrucción>"
 
 ROLES
-  producto   Requerimientos, reglas de negocio, visión. Escribe los documentos 00 y 01.
-  dba        Modelo de datos, DER, DDL, migraciones. Escribe el documento 03.
-  nestjs     Arquitectura backend y contratos de API. Escribe los documentos 02 y 04.
+  producto        Visión, requerimientos, MVP y backlog (00, 01).
+  qa              Verificabilidad, criterios de aceptación, plan de pruebas (11).
+  lider_tecnico   Arquitectura, contrato de la API, revisión técnica (02, 04).
+  dba             Modelo de datos y funciones almacenadas (03).
+  legal           Propuesta y contrato (09).
+  team_leader     Estimaciones (08) y plan de trabajo (10).
+  ux              Flujos y wireframes, mobile first (05).
+  ui              Sistema de diseño y pantallas (05).
+  seguridad       Revisión de seguridad (12).
+  nestjs          Desarrollo backend (etapa 3, todavía no disponible).
+
+  En los proyectos nuevos, cada rol trabaja a partir de su fase: el gateway rechaza
+  un rol de una fase futura y dice qué falta aprobar.
 
 ARGUMENTOS
   <proyecto>      Nombre de la carpeta del proyecto en el vault. Entre comillas si
@@ -47,37 +57,14 @@ if [[ $# -lt 3 ]]; then
   exit 64
 fi
 
-# Solo el orquestador delega. Un sub-agente que delega dispara otro sub-agente:
-# el gateway marca quién invoca cada agy en ORC_CALLER.
-if [[ -n "${ORC_CALLER:-}" && "$ORC_CALLER" != "orchestrator" ]]; then
-  echo "{\"status\":\"ERROR\",\"error\":\"orc-delegate es solo para el orquestador; vos sos el agente ${ORC_CALLER}. Hacé tu tarea con tus herramientas de archivos.\"}" >&2
-  exit 77
-fi
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-delegate
 
 ROLE="$1"; PROJECT="$2"; shift 2; INSTRUCTION="$*"
-case "$ROLE" in
-  producto|dba|nestjs) ;;
-  *)
-    echo "{\"status\":\"ERROR\",\"error\":\"rol desconocido: ${ROLE}. Válidos: producto, dba, nestjs. orc-delegate solo delega; no ejecuta comandos.\"}" >&2
-    exit 64
-    ;;
-esac
-GATEWAY="${ORC_GATEWAY_URL:-http://127.0.0.1:8787}"
-TOKEN="${ORC_TOKEN:-}"
-
-if [[ -z "$TOKEN" ]]; then
-  echo '{"status":"ERROR","error":"ORC_TOKEN no está en el entorno"}' >&2
-  exit 78
+if [[ ! "$ROLE" =~ ^[a-z_]+$ ]]; then
+  echo "{\"status\":\"ERROR\",\"error\":\"rol inválido: ${ROLE}. orc-delegate solo delega en un rol (ver orc-delegate --help); no ejecuta comandos.\"}" >&2
+  exit 64
 fi
 
-PAYLOAD=$(PROJECT="$PROJECT" INSTRUCTION="$INSTRUCTION" python3 -c '
-import json, os
-print(json.dumps({"project": os.environ["PROJECT"], "instruction": os.environ["INSTRUCTION"]}))
-')
-
 # Sin --max-time: un sub-agente puede tardar varios minutos legítimamente.
-curl -sS -X POST "$GATEWAY/agents/$ROLE" \
-  -H "Content-Type: application/json" \
-  -H "X-Orc-Token: $TOKEN" \
-  -H "X-Orc-Job: ${ORC_JOB_ID:-}" \
-  --data "$PAYLOAD"
+orc_post "/agents/$ROLE" "$(orc_json "project=$PROJECT" "instruction=$INSTRUCTION")"

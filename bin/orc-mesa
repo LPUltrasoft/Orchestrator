@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Convoca la mesa técnica de un proyecto.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+orc-mesa — convoca la mesa técnica: Líder técnico, DBA y Producto debaten el stack
+por rondas, y el Líder técnico cierra con un resumen y los ADRs.
+
+USO
+  orc-mesa <proyecto> "<tema>" [rondas]
+
+ARGUMENTOS
+  <proyecto>  Nombre de la carpeta del proyecto en el vault, entre comillas si tiene
+              espacios. Tiene que estar en la fase 2 o más.
+  "<tema>"    De qué se decide. Ejemplo: "Stack del back, front y base de datos".
+  [rondas]    1 a 3. Por defecto 2.
+
+EJEMPLO
+  orc-mesa "App de Turnos" "Stack del back, front y base de datos"
+
+SALIDA
+  JSON con status "iniciada". La mesa corre en segundo plano y tarda varios minutos:
+  terminá tu turno. El usuario ve el progreso en vivo y el sistema te despierta con un
+  mensaje cuando termina, con la lista de ADRs propuestos.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 2 ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-mesa
+orc_post "/mesa" "$(orc_json "project=$1" "topic=$2" "rounds=${3:-2}")"

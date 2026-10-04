@@ -24,6 +24,18 @@ _OFFSET_FILE = config.STATE_DIR / "telegram_offset"
 
 # (chat_id, texto o None si no es texto, nombre de pila)
 MessageHandler = Callable[[str, str | None, str | None], Awaitable[None]]
+# (chat_id, nombre de pila, data del botón, message_id, callback_query_id)
+CallbackHandler = Callable[[str, str | None, str, int, str], Awaitable[None]]
+# Filas de botones: [[("✅ Aprobar", "apr:abc:ok"), ...], ...]
+Buttons = list[list[tuple[str, str]]]
+
+
+def _keyboard(buttons: Buttons | None) -> dict:
+    """Sin botones = teclado vacío: así una edición los saca del mensaje."""
+    return {"inline_keyboard": [
+        [{"text": label, "callback_data": data} for label, data in row]
+        for row in buttons or []
+    ]}
 
 
 class TelegramError(RuntimeError):
@@ -36,6 +48,10 @@ _BARE_FILE_URL = re.compile(r"file://\S+")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")  # `__` no: rompería __init__.py
 _HEADING = re.compile(r"^#{1,6}\s+", re.M)
 _INLINE_CODE = re.compile(r"`([^`\n]+)`")
+# Marcadores internos de agy que a veces se cuelan en la respuesta, por ejemplo
+# <WAITING_FOR_EVENTS>No message content provided.</WAITING_FOR_EVENTS>.
+_INTERNAL_BLOCK = re.compile(r"<([A-Z][A-Z0-9_]{2,})>.*?</\1>\s*", re.S)
+_INTERNAL_TAG = re.compile(r"</?[A-Z][A-Z0-9_]{2,}>\s*")
 
 
 def to_plain_text(text: str) -> str:
@@ -44,6 +60,8 @@ def to_plain_text(text: str) -> str:
     Telegram sin parse_mode muestra los `**` crudos, y un link file:// a una ruta
     del vault no abre en el celular: se deja solo el nombre.
     """
+    text = _INTERNAL_BLOCK.sub("", text)
+    text = _INTERNAL_TAG.sub("", text)
     text = _FILE_LINK.sub(r"\1", text)
     text = _WEB_LINK.sub(r"\1 (\2)", text)
     text = _BARE_FILE_URL.sub(lambda m: unquote(m.group().rstrip("/").rsplit("/", 1)[-1]), text)
@@ -101,6 +119,31 @@ class TelegramBot:
         for chunk in split_message(to_plain_text(text)):
             await self.call("sendMessage", chat_id=chat_id, text=chunk)
 
+    async def send_buttons(self, chat_id: str, text: str, buttons: Buttons) -> int:
+        """Un mensaje con botones. Devuelve su message_id para editarlo después."""
+        sent = await self.call(
+            "sendMessage", chat_id=chat_id, text=to_plain_text(text)[:MAX_MESSAGE],
+            reply_markup=_keyboard(buttons),
+        )
+        return sent["message_id"]
+
+    async def edit(self, chat_id: str, message_id: int, text: str, buttons: Buttons | None = None) -> None:
+        try:
+            await self.call(
+                "editMessageText", chat_id=chat_id, message_id=message_id,
+                text=to_plain_text(text)[:MAX_MESSAGE], reply_markup=_keyboard(buttons),
+            )
+        except TelegramError as exc:
+            if "not modified" not in str(exc):
+                raise
+
+    async def answer_callback(self, callback_id: str, text: str = "") -> None:
+        """Telegram muestra un relojito en el botón hasta que se responde el toque."""
+        try:
+            await self.call("answerCallbackQuery", callback_query_id=callback_id, text=text)
+        except (httpx.HTTPError, TelegramError, ValueError):
+            pass
+
     async def typing(self, chat_id: str) -> None:
         try:
             await self.call("sendChatAction", chat_id=chat_id, action="typing")
@@ -120,7 +163,9 @@ class TelegramBot:
         self.username = me.get("username")
         log.info("bot @%s escuchando por long polling", self.username)
 
-    async def poll_forever(self, handle: MessageHandler) -> None:
+    async def poll_forever(
+        self, handle: MessageHandler, on_callback: CallbackHandler | None = None
+    ) -> None:
         offset = _load_offset()
         backoff = 1
         while True:
@@ -131,7 +176,7 @@ class TelegramBot:
                     "getUpdates",
                     offset=offset,
                     timeout=config.TELEGRAM_POLL_TIMEOUT,
-                    allowed_updates=["message"],
+                    allowed_updates=["message", "callback_query"],
                 )
             except (httpx.HTTPError, TelegramError, ValueError) as exc:
                 # Al bootear la red puede no estar lista: reintentar, nunca morir.
@@ -148,6 +193,19 @@ class TelegramBot:
                 # handler no tiene que volver en loop después de un reinicio.
                 offset = update["update_id"] + 1
                 _save_offset(offset)
+                callback = update.get("callback_query")
+                if callback and on_callback:
+                    try:
+                        await on_callback(
+                            str(((callback.get("message") or {}).get("chat") or {}).get("id", "")),
+                            (callback.get("from") or {}).get("first_name"),
+                            callback.get("data") or "",
+                            (callback.get("message") or {}).get("message_id", 0),
+                            callback.get("id", ""),
+                        )
+                    except Exception:  # noqa: BLE001 - un toque no tumba el bot
+                        log.exception("falló el manejo de un botón")
+                    continue
                 message = update.get("message") or {}
                 chat_id = str((message.get("chat") or {}).get("id", ""))
                 if not chat_id:
