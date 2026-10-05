@@ -1,0 +1,67 @@
+# Servicio de autenticación compartido por los proyectos del Orchestrator: desarrollo.
+# Cada proyecto es una sociedad. Lo levanta scripts/autenticacion.sh en el Docker de orc-ci
+# (no Jenkins: el repo es de LucianoPal y hoy se usa la rama correcciones-seguridad). Los
+# secretos se generan al azar en el home de orc-ci, fuera de este repo.
+#
+# Los backs de los proyectos lo encuentran como http://autenticacion:3001, sumándose a la
+# red externa orc-autenticacion-dev. La base solo es alcanzable desde el servicio.
+name: orc-autenticacion-dev
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  db:
+    image: postgres:18-alpine3.24
+    environment:
+      POSTGRES_DB: autenticacion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      AUTH_DB_APP_PASSWORD: ${AUTH_DB_APP_PASSWORD:?falta AUTH_DB_APP_PASSWORD}
+    volumes:
+      # PostgreSQL 18+: el volumen va en /var/lib/postgresql, no en .../data.
+      - db:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1: durante la inicialización el servidor temporal no escucha por TCP.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d autenticacion"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [interna]
+    restart: unless-stopped
+    logging: *logging
+    deploy: { resources: { limits: { memory: 256m } } }
+
+  app:
+    image: orc-autenticacion:${AUTH_TAG:?falta AUTH_TAG}
+    environment:
+      PORT: "3001"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: autenticacion
+      DB_USER: autenticacion_app
+      DB_PASSWORD: ${AUTH_DB_APP_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET}
+    depends_on:
+      db: { condition: service_healthy }
+    networks:
+      interna: {}
+      compartida: { aliases: [autenticacion] }
+    # Para probarlo a mano desde la PC; los proyectos entran por la red compartida.
+    ports:
+      - "${ORC_DEV_BIND:-127.0.0.1}:18490:3001"
+    restart: unless-stopped
+    logging: *logging
+    deploy: { resources: { limits: { memory: 256m } } }
+
+networks:
+  interna:
+    internal: true
+  compartida:
+    name: orc-autenticacion-dev
+    external: true
+
+volumes:
+  db:

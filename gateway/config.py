@@ -115,7 +115,9 @@ MERGE_NEEDS_APPROVAL = tuple(t.strip() for t in os.environ.get("MERGE_NEEDS_APPR
 PORTS_DEV_BASE = int(os.environ.get("PORTS_DEV_BASE", "18100"))
 PORTS_PROD_BASE = int(os.environ.get("PORTS_PROD_BASE", "19100"))
 PORTS_PER_ENV = int(os.environ.get("PORTS_PER_ENV", "10"))
-PORTS_MAX_PROJECTS = int(os.environ.get("PORTS_MAX_PROJECTS", "40"))  # desarrollo: 18100-18499
+PORTS_MAX_PROJECTS = int(os.environ.get("PORTS_MAX_PROJECTS", "39"))  # desarrollo: 18100-18489
+# El último lugar de cada rango es de la plataforma compartida (autenticación): desarrollo
+# 18490-18499 y producción 19490-19499 (ver plataforma/).
 # Validar los repos con `gh` y abrir PRs. Apagado solo en pruebas con remotos locales.
 GITHUB_CHECKS = os.environ.get("GITHUB_CHECKS", "true").lower() == "true"
 # Roles que programan en los repos, con Bash dentro del sandbox de Claude Code.
