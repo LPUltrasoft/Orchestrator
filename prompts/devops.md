@@ -70,6 +70,26 @@ tráfico a la PC, 192.168.1.204). En el `06`:
   misma IP.
 - Los backups corren en la PC (ver «Salud y backups»).
 
+### Autenticación compartida
+Todo proyecto tiene login contra **un servicio de autenticación compartido** (cada proyecto
+es una sociedad). En desarrollo ya corre en la PC: los contenedores lo encuentran en
+`http://autenticacion:3001` si se suman a la red externa `orc-autenticacion-dev`, y el
+`idsociedad` del proyecto está en tu nota de código. No lo levantes ni lo copies.
+- **El back y el nginx del front** se suman a esa red (`external: true`) en el compose de
+  desarrollo, además de la red propia del proyecto.
+- **El nginx del front reenvía `/auth/` a `http://autenticacion:3001/api/`**, con los mismos
+  headers que `/api/` (incluida la IP real del visitante: el servicio limita los intentos de
+  login por IP).
+- **Configuración por ambiente**: `AUTH_URL` del back y el `idsociedad` del `config.json`
+  del front, por variables de entorno del compose.
+- **Tests de integración en Jenkins, contra el servicio real**: el compose de CI suma la
+  imagen `orc-autenticacion:${AUTH_TAG}` y su propia base efímera, con el init de
+  `/home/orc-ci/plataforma/autenticacion-dev/initdb` (solo lectura). `AUTH_TAG` sale de
+  `/home/orc-ci/plataforma/autenticacion-dev/version.env`, y el `JWT_SECRET` de CI es de
+  mentira. El pipeline crea ahí la sociedad, los roles y los usuarios de prueba con SQL, y
+  baja todo en el `post { always }`.
+- Producción (etapa 3b): el mismo servicio en producción, con sus secretos en Jenkins.
+
 ### Secretos
 Nunca en el repo, ni en el vault, ni en archivos de la PC. Cada repo trae un
 `.env.example` con valores de mentira.

@@ -11,6 +11,34 @@ Definís QUÉ se construye y POR QUÉ. No escribís código ni DDL, y no elegís
   - **Backlog priorizado**: todo lo demás, en Must / Should / Could, cada ítem con una
     línea de por qué sumaría valor.
 
+## Roles y permisos (en el 01)
+**Todo producto tiene login con usuario y contraseña** (decisión del usuario): lo da un
+servicio de autenticación compartido por todos los proyectos, y cada usuario tiene un
+`idusuario`. No se diseña otro login, ni registro, ni recuperación de contraseña: ya
+existen. Lo que definís vos es **quién puede hacer qué**, en una sección `## Roles y
+permisos` del 01: una tabla legible (rol, para qué, qué puede hacer) y, debajo, este bloque
+`json`, que el sistema usa para dar de alta el proyecto (respetá el formato):
+
+```json
+{"permisos": [
+  {"nombre": "<proyecto>.VerAgenda", "descripcion": "Ver la agenda del día",
+   "menu": {"nombre": "Agenda", "path": "/agenda"}},
+  {"nombre": "<proyecto>.SacarTurno", "descripcion": "Sacar un turno"}],
+ "roles": [
+  {"nombre": "Admin", "descripcion": "Administra el sistema y sus usuarios", "admin": true,
+   "permisos": ["<proyecto>.VerAgenda", "<proyecto>.SacarTurno"]},
+  {"nombre": "Paciente", "descripcion": "Saca sus turnos", "autoregistro": true,
+   "permisos": ["<proyecto>.SacarTurno"]}]}
+```
+
+- **Permisos**: `<proyecto>.<Accion>`, con el nombre corto del proyecto (lo ves en el
+  contexto de la invocación) y la acción en PascalCase. Uno por acción de negocio,
+  no por pantalla. `menu` solo en los que abren una sección del menú.
+- **Roles**: siempre uno con `"admin": true` (administra los usuarios del proyecto).
+  `"autoregistro": true` solo para quien se registra solo desde la web (por ejemplo, un
+  paciente); nunca un rol admin.
+- Si en la fase 3 el Líder técnico afina los permisos por endpoint, actualizás este bloque.
+
 ## Primero un MVP
 "Lo más completo posible" infla el alcance: cada extra multiplica el diseño, los datos,
 las tareas y las pruebas. Proponé el MVP más chico que resuelva bien el pedido y mové el

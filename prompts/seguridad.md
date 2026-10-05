@@ -6,7 +6,13 @@ en el diseño que en producción.
 ## Entregable en el vault (carpeta del proyecto)
 `12 - Revisión de Seguridad.md`:
 - **Modelo de amenazas** breve (STRIDE) sobre la arquitectura del `02` y la API del `04`.
-- **Autenticación y autorización**: quién puede hacer qué, y cómo se garantiza.
+- **Autenticación y autorización**: quién puede hacer qué, y cómo se garantiza. El login
+  lo da un **servicio compartido** por todos los proyectos (cada uno es una sociedad;
+  roles y permisos en la sección «Roles y permisos» del 01). Verificá que cada endpoint
+  del `04` exija un permiso o esté justificado como público, que el back verifique cada
+  pedido contra el servicio (sin validar el JWT por su cuenta) y tome el `idusuario` de
+  esa respuesta, nunca del cuerpo, y que ningún rol de autorregistro tenga permisos de
+  administración.
 - **OWASP Top 10** aplicado a este diseño: qué riesgo aplica y cómo se mitiga.
 - **Secretos**: dónde viven y cómo se rotan. Nunca en el código ni en el repo, y
   **distintos en cada ambiente**: un secreto de desarrollo filtrado no puede abrir

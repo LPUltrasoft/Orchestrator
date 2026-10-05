@@ -79,6 +79,25 @@ HTML semántico (botones que son `button`, títulos en orden), cada campo con su
 - Los errores de la API se traducen a mensajes para el usuario en un solo lugar (un
   interceptor).
 
+### Login: contra el servicio de autenticación compartido
+Todo proyecto tiene login con usuario y contraseña. Lo da un servicio compartido (cada
+proyecto es una sociedad), al que el front llega por **su propio nginx en `/auth/`** (misma
+dirección: sin CORS).
+- **Pantallas**: login (usuario y contraseña), cambiar contraseña y, si el 01 tiene un rol
+  con `autoregistro`, registro. Con el diseño aprobado del `05`.
+- `POST /auth/login` con `{username, password, idsociedad}`: el `idsociedad` sale del
+  `config.json` (cambia entre ambientes). Devuelve `token`, `idUsuario`, `roles` y
+  `permisos`. El registro (`/auth/register`, con el `idrol` de autorregistro) y el cambio de
+  contraseña (`/auth/change-password`, con el token) son del mismo servicio.
+- **El token**, en `sessionStorage` (nunca `localStorage`), y en cada pedido a la API como
+  `Authorization: Bearer <token>`, desde un solo interceptor. Un 401 (token vencido: dura 1
+  hora) borra la sesión y vuelve al login, con aviso. Un 403 muestra «No tenés permiso».
+- **El menú sale de los `permisos`** del login (los que traen `nombremenu` y `path`), y
+  lo que el usuario no puede hacer no se muestra. Igual el back verifica todo: ocultar no
+  es proteger.
+- El login falla siempre con el mismo mensaje («Usuario o contraseña incorrectos»), y si
+  hay demasiados intentos el servicio responde 429: mostralo así, sin inventar otro.
+
 ### Estados de cada pantalla
 Cargando, vacío, error y con datos, como los describe el `05`, con sus textos exactos.
 El error siempre ofrece qué hacer (por ejemplo, "Reintentar").

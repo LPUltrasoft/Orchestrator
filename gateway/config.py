@@ -118,6 +118,12 @@ PORTS_PER_ENV = int(os.environ.get("PORTS_PER_ENV", "10"))
 PORTS_MAX_PROJECTS = int(os.environ.get("PORTS_MAX_PROJECTS", "39"))  # desarrollo: 18100-18489
 # El último lugar de cada rango es de la plataforma compartida (autenticación): desarrollo
 # 18490-18499 y producción 19490-19499 (ver plataforma/).
+# Autenticación compartida de los proyectos (plataforma/autenticacion): cada proyecto es
+# una sociedad. El gateway la da de alta (orc-autenticacion) entrando como orc-ci a la base.
+AUTH_DEV_DB_CONTAINER = os.environ.get("AUTH_DEV_DB_CONTAINER", "orc-autenticacion-dev-db-1")
+AUTH_DEV_APP_CONTAINER = os.environ.get("AUTH_DEV_APP_CONTAINER", "orc-autenticacion-dev-app-1")
+AUTH_DEV_NETWORK = os.environ.get("AUTH_DEV_NETWORK", "orc-autenticacion-dev")
+AUTH_INTERNAL_URL = os.environ.get("AUTH_INTERNAL_URL", "http://autenticacion:3001")
 # Validar los repos con `gh` y abrir PRs. Apagado solo en pruebas con remotos locales.
 GITHUB_CHECKS = os.environ.get("GITHUB_CHECKS", "true").lower() == "true"
 # Roles que programan en los repos, con Bash dentro del sandbox de Claude Code.

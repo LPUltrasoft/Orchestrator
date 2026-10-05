@@ -510,6 +510,11 @@ def _code_note(project: str, task: str, repos: list[str], project_path: Path) ->
     ports_line = (f"\nPuertos del proyecto: desarrollo {ports['desarrollo'][0]}–{ports['desarrollo'][1]} (publicados en "
                   f"`${{ORC_DEV_BIND:-127.0.0.1}}`), producción {ports['produccion'][0]}–{ports['produccion'][1]}. "
                   "No uses otros.\n" if ports else "")
+    auth = (state.get("autenticacion") or {}).get("desarrollo")
+    if auth:
+        ports_line += (f"Autenticación (servicio compartido): idsociedad de desarrollo **{auth['idsociedad']}**; "
+                       f"los contenedores la encuentran en `{config.AUTH_INTERNAL_URL}`, sumándose a la red "
+                       f"externa `{config.AUTH_DEV_NETWORK}`. Roles y permisos: sección «Roles y permisos» del 01.\n")
     return f"""# Tu código y tu terminal
 
 Trabajás la tarea **{task}**. Tus repos ya están en la rama `{task}`, creada desde
@@ -556,7 +561,7 @@ def build_subagent_prompt(
 # Contexto de esta invocación
 
 - **Vault de Obsidian:** `{config.VAULT_PATH}`
-- **Proyecto:** {project}
+- **Proyecto:** {project} (nombre corto: `{code.slug(project)}`, el prefijo de sus permisos)
 {where}
 
 Antes de escribir, listá la carpeta y leé los documentos que ya existan.

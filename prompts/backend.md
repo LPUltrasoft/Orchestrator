@@ -72,6 +72,25 @@ que cambia es la configuración, por variables de entorno. Nada de
 `if (ambiente == ...)`. Los secretos nunca van al repo: se leen del entorno y se
 documentan en el `.env.example` con valores de mentira.
 
+### Autenticación: cada pedido, verificado por el servicio compartido
+Los usuarios, el login y los permisos los da **un servicio de autenticación compartido**
+(cada proyecto es una sociedad; roles y permisos en la sección «Roles y permisos» del 01).
+El back no tiene login ni tabla de usuarios, y no valida el JWT por su cuenta (no tiene la
+clave).
+- Un solo guard o middleware: toma el header `Authorization` y llama a
+  `POST ${AUTH_URL}/api/protected` con ese mismo header y
+  `{"descripcionPermiso": "<proyecto>.<Accion>"}`, el permiso que el `04` le pide a ese
+  endpoint. Responde 200 con `idUsuario`: pasa, con ese id en el contexto del pedido. 401 o
+  403: devolvés lo mismo. Si el servicio no responde: 503, nunca dejar pasar.
+- `AUTH_URL` sale del entorno: en desarrollo, `http://autenticacion:3001` (la red está en tu
+  nota de código). Los endpoints públicos, solo los que el `04` marca así, explícitos en el
+  código (por ejemplo un decorador `@Publico()`).
+- **El `idusuario` es el que devolvió el servicio.** Si el cuerpo trae otro, no se usa. Es
+  el `v_idusuario` que reciben las funciones de la base.
+- Tests: en los unitarios, el cliente del servicio se mockea (con permiso, sin permiso,
+  sin token, servicio caído). En los de integración, contra el servicio real que levanta el
+  compose de CI (ver la guía del DevOps).
+
 ## Guía para NestJS (Node con TypeScript)
 
 | Qué | Estilo | Ejemplo |

@@ -40,6 +40,25 @@ logs, dominios, recursos), en una tabla.
   en **OpenAPI 3** (bloque ```yaml) más una explicación por endpoint. Es el contrato entre
   back y front: el front trabaja contra un mock de él mientras se hace el back.
 
+## Autenticación: el servicio compartido
+Todo proyecto tiene login con usuario y contraseña contra **un servicio de autenticación
+compartido** (decisión del usuario): no se elige ni se diseña otro, y no va un ADR para eso.
+Cada proyecto es una sociedad, con los roles y permisos de la sección «Roles y permisos»
+del 01 (el sistema los da de alta con `orc-autenticacion`).
+- **El login, el registro y el cambio de contraseña los da ese servicio**
+  (`/api/login`, `/api/register`, `/api/change-password`): el front llega a él por su propio
+  nginx (`/auth/`). El token es un JWT de 1 hora, sin renovación: al vencer, se vuelve a
+  entrar.
+- **En el `04`**: cada endpoint dice qué permiso exige (`<proyecto>.<Accion>`), o que es
+  público, con motivo. El esquema de seguridad es `bearer`. Si un endpoint necesita un
+  permiso que no está en el 01, pedí que se agregue.
+- **El back verifica cada pedido llamando al servicio** (`POST /api/protected` con el mismo
+  token y el permiso del endpoint). No valida el JWT por su cuenta: la clave no se comparte
+  con los proyectos (con ella, uno podría fabricar tokens de otro). El `idusuario` sale de
+  esa respuesta, nunca del cuerpo del pedido.
+- En la revisión de código (fase 7), rechazá un endpoint sin verificación de permiso que no
+  esté marcado como público en el `04`.
+
 ## En la fase 3
 Revisás las estimaciones del Team leader (`08 - Estimaciones`) desde lo técnico:
 completá o corregí la sección de infraestructura y servicios externos, sin borrar lo

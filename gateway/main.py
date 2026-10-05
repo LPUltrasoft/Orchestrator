@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import code, config, design, diagram, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
+from . import autenticacion, code, config, design, diagram, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -90,6 +90,10 @@ class DelegateIn(BaseModel):
     # Etapa 3: la tarea del plan (T-NNN, o «esqueleto»). Con ella, el rol programa en
     # los repos del proyecto y el sistema publica la rama y abre el PR.
     tarea: str | None = None
+
+
+class AuthIn(BaseModel):
+    project: str = Field(min_length=1)
 
 
 class ReposIn(BaseModel):
@@ -1332,6 +1336,46 @@ def _scan_alert(project: str, repos: dict[str, dict], problems: dict[str, str], 
             f"Credentials → «{config.JENKINS_CREDENTIALS_ID}» → Update."
         )
     return f"{text}\n\n{after}"
+
+
+@app.post("/autenticacion/alta", dependencies=[Depends(auth)])
+async def auth_signup(body: AuthIn, x_orc_job: str = Header(default="")) -> dict:
+    """Da de alta (o actualiza) el proyecto en la autenticación compartida de desarrollo según
+    «Roles y permisos» del 01: su sociedad, roles y permisos, y la primera vez el admin, cuya
+    contraseña temporal le llega solo al usuario."""
+    state = await asyncio.to_thread(process.load, body.project)
+    if state is None:
+        raise HTTPException(409, f"«{body.project}» es anterior al proceso: no tiene autenticación.")
+    try:
+        data = await asyncio.to_thread(autenticacion.load, body.project)
+    except autenticacion.AuthError as exc:
+        raise HTTPException(409, f"{exc}. Delegá en producto que lo complete: sección «Roles y permisos» del 01, "
+                                 "con el bloque ```json que pide su guía.") from exc
+    current = (state.get("autenticacion") or {}).get("desarrollo") or {}
+    try:
+        result = await asyncio.to_thread(autenticacion.apply, body.project, data, current.get("idsociedad"))
+        admin_role = next(r["nombre"] for r in data["roles"] if r.get("admin"))
+        password = None if current.get("admin") else await asyncio.to_thread(
+            autenticacion.create_admin, result["idsociedad"], result["roles"][admin_role])
+    except (autenticacion.AuthError, subprocess.SubprocessError) as exc:
+        raise HTTPException(502, f"No pude dar de alta «{body.project}» en la autenticación: {exc}") from exc
+    entry = {**result, "admin": "admin"}
+    state.setdefault("autenticacion", {})["desarrollo"] = entry
+    await asyncio.to_thread(process.save, body.project, state, "alta en la autenticación de desarrollo")
+    if password:
+        # Directo al usuario: la contraseña no pasa por el Director ni queda en el vault.
+        text = (f"🔐 «{body.project}» ya tiene login en desarrollo (sociedad {result['idsociedad']}).\n\n"
+                f"Usuario: admin\nContraseña temporal: {password}\n\n"
+                "Cambiala al entrar y borrá este mensaje. Es solo para desarrollo.")
+        chat = _chat_for(x_orc_job)
+        if chat and bot:
+            await bot.send(chat, text)
+        else:
+            await _alert(text)
+    return {"status": "ok", "desarrollo": entry, "admin_creado": bool(password),
+            "siguiente": ("Listo. " + ("El usuario ya recibió la contraseña del admin. " if password else "")
+                          + "Los roles que programan ven el idsociedad en su nota de código. Si cambian los "
+                            "roles o permisos del 01, volvé a correr orc-autenticacion.")}
 
 
 class MergeError(Exception):

@@ -47,8 +47,8 @@ _NOT_YET = "Esta fase es de la etapa 3 del sistema y todavía no está implement
 
 PHASES = (
     Phase(1, "Descubrimiento", "🔍", ("producto", "qa"), "alcance", True,
-          "Delegá en producto la visión (00) y los requerimientos con el MVP y el backlog "
-          "priorizado (01). Después en qa, que revise que cada requisito sea verificable y "
+          "Delegá en producto la visión (00) y los requerimientos con el MVP, el backlog "
+          "priorizado y los roles y permisos del login (01). Después en qa, que revise que cada requisito sea verificable y "
           "escriba los criterios de aceptación en el plan de pruebas (11). Al final pedí la "
           "aprobación «alcance»."),
     Phase(2, "Mesa técnica", "🏛️", ("lider_tecnico", "dba", "producto"), "stack", True,
@@ -65,8 +65,11 @@ PHASES = (
           "Delegá en devops el plan de infraestructura (06), con los nombres de los dos repos. "
           "Pedile al usuario los repos con orc-repos <proyecto> pedir <nombre-front> <nombre-back> "
           "y terminá el turno; cuando mande los links, registralos con orc-repos <proyecto> "
-          "registrar <link-front> <link-back>. Después delegá en devops el esqueleto con "
-          "--tarea esqueleto (proyecto base, Docker, compose, Jenkinsfile, healthcheck); que lo "
+          "registrar <link-front> <link-back>. Dalo de alta en la autenticación compartida con "
+          "orc-autenticacion <proyecto> alta (si al 01 le falta «Roles y permisos», delegá en "
+          "producto que lo complete). Después delegá en devops el esqueleto con "
+          "--tarea esqueleto (proyecto base, Docker, compose, Jenkinsfile, healthcheck, y el "
+          "login conectado a la autenticación compartida); que lo "
           "revise lider_tecnico (Desarrollo/esqueleto - <repo>.diff) y lo valide qa con --tarea "
           "esqueleto. Con los dos aprobados, pedí la aprobación del merge: orc-aprobacion "
           "<proyecto> merge:esqueleto \"<resumen>\" (el sistema le agrega los links de los PRs; "

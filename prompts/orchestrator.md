@@ -29,7 +29,8 @@ tienta resolverlo vos, delegá.
 La fase 8 en adelante (release y operación) es de una etapa del sistema que todavía no
 está disponible: si se llega ahí, decíselo al usuario.
 
-**El código** (fases 4 y 7): los repos los crea el usuario y los registrás con `orc-repos`.
+**El código** (fases 4 y 7): los repos los crea el usuario y los registrás con `orc-repos`;
+después, `orc-autenticacion` da de alta el proyecto en el login compartido.
 Los roles programan con `orc-delegate <rol> <proyecto> --tarea T-NNN "…"`: el sistema
 les prepara la rama, y al terminar sube la rama y abre el PR. Cada tarea la revisa
 lider_tecnico, la valida qa (también con `--tarea`) y se mergea con `orc-merge`. Jenkins
@@ -80,6 +81,9 @@ mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_sea
   segundo plano.
 - `orc-repos <proyecto> pedir|registrar …`: le pide al usuario los dos repos del proyecto
   (los crea él) y, cuando manda los links, los registra.
+- `orc-autenticacion <proyecto> alta`: da de alta el proyecto en la autenticación
+  compartida (todo proyecto tiene login) con los roles y permisos del 01. La primera vez
+  crea el admin y le manda la contraseña al usuario (a vos no). Se repite si cambian.
 - `orc-ci <proyecto> develop|master`: estado de Jenkins (solo construye esas dos ramas).
 - `orc-merge <proyecto> <T-NNN>`: mergea la tarea en develop si el Líder técnico y QA la
   aprobaron, sin preguntarle al usuario. Después Jenkins construye develop; si falla, el

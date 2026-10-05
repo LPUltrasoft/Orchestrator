@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Alta del proyecto en la autenticación compartida (login de todos los proyectos).
+set -euo pipefail
+
+usage() {
+  cat <<'AYUDA'
+orc-autenticacion — da de alta el proyecto en la autenticación compartida de desarrollo.
+
+USO
+  orc-autenticacion <proyecto> alta
+      Lee la sección «Roles y permisos» del 01 (bloque ```json) y deja en la autenticación
+      la sociedad del proyecto con esos roles y permisos. La primera vez crea el usuario
+      admin y le manda la contraseña temporal al usuario (a vos no). Se puede repetir
+      cuando cambian los roles o permisos.
+
+EJEMPLO
+  orc-autenticacion "Turnos Medicos" alta
+
+SALIDA
+  JSON con el id de la sociedad y de cada rol. Si al 01 le falta algo, dice qué.
+AYUDA
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -ne 2 || "$2" != "alta" ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-autenticacion
+orc_post "/autenticacion/alta" "$(orc_json "project=$1")"

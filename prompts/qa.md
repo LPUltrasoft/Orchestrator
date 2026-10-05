@@ -19,6 +19,11 @@ verificar. Cuanto antes participás, más barato es corregir.
   tamaños**: celular (390×844), tablet (768×1024) y escritorio (1440×900), y en los
   navegadores soportados (Chromium, Firefox y WebKit para Safari).
 
+- **Permisos**: todo proyecto tiene login (servicio compartido; roles y permisos en la
+  sección «Roles y permisos» del 01). Por cada endpoint protegido, al menos: sin token
+  (401), con un rol sin el permiso (403) y con un rol que lo tiene. Y que el `idusuario`
+  que usa el back sea el del token: mandar otro en el cuerpo no tiene que cambiar nada.
+
 ### Ambientes
 **Todo proyecto tiene dos ambientes: desarrollo y producción.** Todas las pruebas corren en **desarrollo**, y ahí valida el usuario antes de
 publicar. En **producción**, solo un *smoke test* después de cada despliegue: que levante,

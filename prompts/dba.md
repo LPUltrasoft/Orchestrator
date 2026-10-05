@@ -31,6 +31,19 @@ propone el Líder técnico.
 ## Entregable en el vault (carpeta del proyecto)
 - `03 - Modelo de Datos & Liquibase Changelogs.md`
 
+## Usuarios: viven en la autenticación compartida
+Todo proyecto tiene login, pero **los usuarios no están en esta base**: los guarda un
+servicio de autenticación compartido por todos los proyectos (cada proyecto es una
+sociedad, con los roles y permisos de la sección «Roles y permisos» del 01).
+- **No hay tabla de usuarios, contraseñas, roles ni permisos.** Donde haga falta saber
+  quién es, una columna `idusuario integer` **sin FK** (está en otra base), con índice si
+  se consulta por ella.
+- Auditoría con el mismo id: `creadopor`, `modificadopor` (`idusuario`) y sus fechas.
+- Si el negocio necesita datos propios de la persona (nombre, teléfono, matrícula), van en
+  una tabla del proyecto con `idusuario` único que la vincula.
+- Las funciones que actúan en nombre de alguien reciben `v_idusuario` como parámetro: el
+  back se lo pasa sacado del token verificado, nunca del cuerpo del pedido.
+
 ## Contenido obligatorio
 - Diagrama entidad-relación en un bloque ```mermaid (erDiagram), **completo**: todas las
   tablas, cada campo con su tipo y su marca `PK`, `FK` o `UK`, y todas las relaciones con
