@@ -316,23 +316,26 @@ def advance_after_skeleton(state: dict) -> int | None:
 
 
 def allocate_ports(state: dict) -> dict:
-    """Un bloque de puertos para el proyecto: libre en la PC y sin usar por otro proyecto."""
+    """Puertos del proyecto: el primer lugar libre en la PC y sin usar por otro proyecto,
+    con el mismo número de orden en el rango de desarrollo y en el de producción."""
     if state.get("puertos"):
         return state["puertos"]
     import subprocess
-    taken = {s.get("puertos", {}).get("base") for _, s in projects_with_state() if s.get("puertos")}
+    taken = {s["puertos"]["desarrollo"][0] for _, s in projects_with_state() if s.get("puertos")}
     listening = set()
     try:
         out = subprocess.run(["ss", "-ltnH"], capture_output=True, text=True, timeout=10).stdout
         listening = {int(line.split()[3].rsplit(":", 1)[1]) for line in out.splitlines() if line.split()}
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
         pass
-    base, size = config.PORTS_BASE, config.PORTS_BLOCK
-    while base in taken or any(p in listening for p in range(base, base + size)):
-        base += size
-    half = size // 2
-    state["puertos"] = {"base": base, "desarrollo": [base, base + half - 1], "produccion": [base + half, base + size - 1]}
-    return state["puertos"]
+    size = config.PORTS_PER_ENV
+    for slot in range(config.PORTS_MAX_PROJECTS):
+        dev, prod = config.PORTS_DEV_BASE + slot * size, config.PORTS_PROD_BASE + slot * size
+        ports = [*range(dev, dev + size), *range(prod, prod + size)]
+        if dev not in taken and not any(p in listening for p in ports):
+            state["puertos"] = {"base": dev, "desarrollo": [dev, dev + size - 1], "produccion": [prod, prod + size - 1]}
+            return state["puertos"]
+    raise RuntimeError(f"no quedan puertos libres para un proyecto nuevo (PORTS_MAX_PROJECTS={config.PORTS_MAX_PROJECTS})")
 
 
 def palette_problem(project: str, state: dict | None) -> str | None:

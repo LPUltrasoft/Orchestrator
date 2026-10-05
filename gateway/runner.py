@@ -507,9 +507,9 @@ def _code_note(project: str, task: str, repos: list[str], project_path: Path) ->
     trees = "\n".join(f"- Repo **{r}**: `{code.worktree(project, r)}`" for r in repos)
     state = process.load(project) or {}
     ports = state.get("puertos")
-    ports_line = (f"\nPuertos del proyecto: desarrollo {ports['desarrollo'][0]}–{ports['desarrollo'][1]} (solo en "
-                  f"127.0.0.1), producción {ports['produccion'][0]}–{ports['produccion'][1]}. No uses otros.\n"
-                  if ports else "")
+    ports_line = (f"\nPuertos del proyecto: desarrollo {ports['desarrollo'][0]}–{ports['desarrollo'][1]} (publicados en "
+                  f"`${{ORC_DEV_BIND:-127.0.0.1}}`), producción {ports['produccion'][0]}–{ports['produccion'][1]}. "
+                  "No uses otros.\n" if ports else "")
     return f"""# Tu código y tu terminal
 
 Trabajás la tarea **{task}**. Tus repos ya están en la rama `{task}`, creada desde

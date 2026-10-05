@@ -108,10 +108,14 @@ DEV_BRANCH = os.environ.get("DEV_BRANCH", "develop")
 # los PRs). Decisión del 5/10/2026: solo el esqueleto; las tareas se mergean con QA y el
 # Líder técnico.
 MERGE_NEEDS_APPROVAL = tuple(t.strip() for t in os.environ.get("MERGE_NEEDS_APPROVAL", "esqueleto").split(",") if t.strip())
-# Puertos de cada proyecto: un bloque de PORTS_BLOCK desde PORTS_BASE (la mitad para
-# desarrollo, solo en 127.0.0.1; la otra para producción), asignado al registrar los repos.
-PORTS_BASE = int(os.environ.get("PORTS_BASE", "18100"))
-PORTS_BLOCK = int(os.environ.get("PORTS_BLOCK", "20"))
+# Puertos de cada proyecto, asignados al registrar los repos: PORTS_PER_ENV para desarrollo
+# desde PORTS_DEV_BASE y otros tantos para producción desde PORTS_PROD_BASE, en el mismo
+# lugar de cada rango. Rangos separados para que el firewall abra desarrollo a la red
+# local (scripts/desarrollo-red-local.sh) con una sola regla, sin tocar producción.
+PORTS_DEV_BASE = int(os.environ.get("PORTS_DEV_BASE", "18100"))
+PORTS_PROD_BASE = int(os.environ.get("PORTS_PROD_BASE", "19100"))
+PORTS_PER_ENV = int(os.environ.get("PORTS_PER_ENV", "10"))
+PORTS_MAX_PROJECTS = int(os.environ.get("PORTS_MAX_PROJECTS", "40"))  # desarrollo: 18100-18499
 # Validar los repos con `gh` y abrir PRs. Apagado solo en pruebas con remotos locales.
 GITHUB_CHECKS = os.environ.get("GITHUB_CHECKS", "true").lower() == "true"
 # Roles que programan en los repos, con Bash dentro del sandbox de Claude Code.

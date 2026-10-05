@@ -87,9 +87,13 @@ cada secreto que necesita el proyecto y dónde vive en cada ambiente.
   (`docker compose -p <proyecto>-dev … up -d`).
 - **En `master`**: build y tests. El despliegue a producción, con la aprobación del
   usuario, llega en la etapa siguiente del sistema: dejá el stage preparado y comentado.
-- **Puertos**: el sistema le asigna a cada proyecto un bloque (te lo dice al trabajar con
-  `--tarea`). Desarrollo publica **solo en `127.0.0.1`**, en los puertos de desarrollo;
-  producción va a usar los suyos. Dejá en el `06` qué servicio usa cada puerto.
+- **Puertos**: el sistema le asigna a cada proyecto puertos de desarrollo y de producción
+  (te los dice al trabajar con `--tarea`). Desarrollo publica en los suyos **siempre con
+  `"${ORC_DEV_BIND:-127.0.0.1}:<puerto>:<puerto del contenedor>"`**: sin la variable queda
+  solo local; Jenkins la define cuando el usuario abre desarrollo a su red, y el firewall
+  de la PC deja entrar solo las IPs que eligió. Los healthchecks del pipeline, contra
+  `127.0.0.1`. La base de desarrollo no publica puertos. Producción va a usar los suyos.
+  Dejá en el `06` qué servicio usa cada puerto.
 - **Secretos de desarrollo**: valores de mentira definidos en el compose de desarrollo
   (la base solo es alcanzable dentro de su red). Los de producción no van nunca al repo.
 
