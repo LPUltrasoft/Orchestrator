@@ -63,7 +63,7 @@ sobrescribe si no lo puede parsear):
   "permissions": {
     "allow": [
       "command(orc-delegate)", "command(orc-mesa)", "command(orc-aprobacion)",
-      "command(orc-estado)", "command(orc-diseno)",
+      "command(orc-estado)", "command(orc-diseno)", "command(orc-repos)",
       "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
       "command(git log)", "command(git status)", "command(git diff)",
       "mcp(context7/*)"
@@ -190,7 +190,7 @@ trabajan sin fases.
 | `revisor_ux_ui` | 13 revisión de UX, UI y capturas | claude | `claude-sonnet-5-5` | medium |
 | `qa` | 11 plan de pruebas | claude | `claude-opus-5-5` | medium |
 | `backend` | Código del back en su repo (etapa 3) | claude | `claude-opus-5-5` | medium |
-| `frontend` | Código del front en su repo (etapa 3) | claude | `claude-opus-5-5` | medium |
+| `frontend` | Código del front en su repo (etapa 3) | claude | `claude-sonnet-5-5` | medium |
 | `lider_tecnico` | ADRs, 02 arquitectura, 04 API (OpenAPI) | claude | `claude-opus-5-5` | high |
 | `dba` | 03 modelo y funciones almacenadas | claude | `claude-opus-5-5` | high |
 | `team_leader` | 08 estimaciones, 10 plan de trabajo | claude | `claude-opus-5-5` | high |
@@ -290,6 +290,25 @@ claude -p --output-format stream-json --verbose --model <modelo> --effort <nivel
   roles sin MCP suman `--safe-mode`, que apagaría también los MCP elegidos.
 - El prompt va por stdin y la memoria del rol se retoma con `--resume <session_id>`.
 - `--bare` no sirve: pide API key y la suscripción entra por OAuth.
+
+## Etapa 3: los agentes programan (en curso)
+
+- **Repos**: los crea el usuario (con `master` y `develop`); `orc-repos <proyecto> pedir`
+  se los pide por Telegram y `orc-repos <proyecto> registrar <links>` los clona dos
+  veces: un **espejo** con el remoto de GitHub (el único que usa credenciales) y un
+  **clon de trabajo** sin remoto en `~/Proyectos/<proyecto>/`, donde programan los agentes.
+- **`orc-delegate <rol> <proyecto> --tarea T-NNN "…"`** (backend, frontend, qa, devops):
+  el rol trabaja en la rama de la tarea con **Bash dentro del sandbox nativo de Claude
+  Code** (escribe solo en sus repos y en la caché del proyecto; home oculto salvo los
+  toolchains; red solo a registros de paquetes; sin Docker). Al terminar, el gateway
+  sube la rama, abre el PR hacia `develop` y deja el diff en `Desarrollo/` del vault.
+- **Todo git del gateway sobre un clon de trabajo corre en bubblewrap** (sin red, home
+  oculto): lo que un agente plante en `.git/` no sale de ahí.
+- **`orc-merge <proyecto> T-NNN`**: mergea en `develop` solo si `Desarrollo/T-NNN.md`
+  tiene la «Revisión técnica» y la «Validación de QA» con `**Veredicto:** Aprobada`. El
+  merge se hace en el espejo sin checkout (`git merge-tree`).
+
+Diseño y estado en el vault, documento 06.
 
 ## API del gateway
 

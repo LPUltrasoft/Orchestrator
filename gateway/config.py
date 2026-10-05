@@ -83,7 +83,7 @@ _DEFAULT_AGENTS = {
     "team_leader":    ("claude", "claude-opus-5-5",       "high"),
     "seguridad":      ("claude", "claude-opus-5-5",       "high"),
     "backend":        ("claude", "claude-opus-5-5",       "medium"),
-    "frontend":       ("claude", "claude-opus-5-5",       "medium"),
+    "frontend":       ("claude", "claude-sonnet-5-5",     "medium"),
     "devops":         ("claude", "claude-opus-5-5",       "high"),
 }
 ENGINES = {r: os.environ.get(f"ENGINE_{r.upper()}", e) for r, (e, _, _) in _DEFAULT_AGENTS.items()}
@@ -96,6 +96,28 @@ CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
 RCLONE_BIN = os.environ.get("RCLONE_BIN", shutil.which("rclone") or str(Path.home() / ".local/bin/rclone"))
 DRIVE_REMOTE = os.environ.get("DRIVE_REMOTE", "drive-backups")
 DRIVE_ALERT_GB = float(os.environ.get("DRIVE_ALERT_GB", "14"))
+# Etapa 3: código de los proyectos. Los clones de trabajo (donde programan los agentes,
+# en el sandbox) van en PROJECTS_CODE_DIR/<proyecto>/{front,back}; los espejos con el
+# remoto de GitHub (los únicos con credenciales), en MIRRORS_DIR.
+PROJECTS_CODE_DIR = Path(os.environ.get("PROJECTS_CODE_DIR", Path.home() / "Proyectos"))
+MIRRORS_DIR = Path(os.environ.get("MIRRORS_DIR", Path.home() / ".local/share/orchestrator/repos"))
+# Ramas de los repos que crea el usuario (todos vienen con las dos): producción y desarrollo.
+PROD_BRANCH = os.environ.get("PROD_BRANCH", "master")
+DEV_BRANCH = os.environ.get("DEV_BRANCH", "develop")
+# Validar los repos con `gh` y abrir PRs. Apagado solo en pruebas con remotos locales.
+GITHUB_CHECKS = os.environ.get("GITHUB_CHECKS", "true").lower() == "true"
+# Roles que programan en los repos, con Bash dentro del sandbox de Claude Code.
+CODE_ROLES = ("backend", "frontend", "qa", "devops")
+# A qué repos entra cada uno: el suyo, o los dos.
+CODE_REPOS = {"backend": ("back",), "frontend": ("front",), "qa": ("front", "back"), "devops": ("front", "back")}
+# Dominios a los que puede salir el Bash del sandbox: solo registros de paquetes.
+SANDBOX_DOMAINS = tuple(d.strip() for d in os.environ.get(
+    "SANDBOX_DOMAINS",
+    "registry.npmjs.org,repo.maven.apache.org,repo1.maven.org,pypi.org,files.pythonhosted.org",
+).split(",") if d.strip())
+# Toolchains instalados en el home (el sandbox oculta el home): solo lectura.
+SANDBOX_TOOLCHAINS = tuple(p for p in (Path.home() / ".nvm",) if p.exists())
+
 # Autoprueba de los motores (al arrancar y una vez por día, a SELFTEST_HOUR hora local),
 # con el modelo más barato de cada uno.
 SELFTEST_AGY_MODEL = os.environ.get("SELFTEST_AGY_MODEL", "gemini-3.8-flash-low")

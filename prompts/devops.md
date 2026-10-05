@@ -13,14 +13,14 @@ ejecutarse tal cual cuando llegue el momento, sin volver a decidir nada.
 
 ### Repos
 - Dos repos **privados** en GitHub: uno para el front y otro para el back.
-- **Los crea el usuario, no el sistema.** En el `06` dejá lo que tiene que crear: el
-  nombre exacto de cada uno, que sean privados y **vacíos** (sin README, `.gitignore` ni
-  licencia, para que el primer push no choque) y una descripción de una línea. El
-  sistema se lo pide por Telegram, él manda los links y el sistema los clona en
-  `~/Proyectos/<proyecto>/front` y `~/Proyectos/<proyecto>/back`.
+- **Los crea el usuario, no el sistema**, siempre con dos ramas: `master` (producción)
+  y `develop` (desarrollo). En el `06` dejá lo que tiene que crear: el nombre exacto de
+  cada uno, que sean privados y una descripción de una línea. El sistema se lo pide por
+  Telegram, él manda los links y el sistema los clona en `~/Proyectos/<proyecto>/front` y
+  `~/Proyectos/<proyecto>/back`.
 - El repo del back aloja el `docker-compose` de la base y los changelogs de Liquibase.
 - Estructura de carpetas de cada uno.
-- Ramas: `develop` despliega en desarrollo; `main` despliega en producción. `main`
+- Ramas: `develop` despliega en desarrollo; `master` despliega en producción. `master`
   protegida: solo entra por pull request desde `develop`.
 
 ### Docker

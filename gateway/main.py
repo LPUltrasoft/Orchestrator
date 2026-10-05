@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, design, drive, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
+from . import code, config, design, drive, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -81,6 +81,21 @@ class ChatIn(BaseModel):
 class DelegateIn(BaseModel):
     project: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
+    # Etapa 3: la tarea del plan (T-NNN, o «esqueleto»). Con ella, el rol programa en
+    # los repos del proyecto y el sistema publica la rama y abre el PR.
+    tarea: str | None = None
+
+
+class ReposIn(BaseModel):
+    project: str = Field(min_length=1)
+    front: str = Field(min_length=1)  # nombre (pedir) o link (registrar)
+    back: str = Field(min_length=1)
+    chat_id: str | None = None
+
+
+class MergeIn(BaseModel):
+    project: str = Field(min_length=1)
+    tarea: str = Field(min_length=1)
 
 
 class ApprovalIn(BaseModel):
@@ -956,6 +971,7 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
         result = await runner.invoke_subagent(
             role, body.project, body.instruction,
             on_step=(lambda step: live.step(role, step)) if live else None,
+            task=body.tarea,
         )
     except (ValueError, RuntimeError) as exc:
         if live:
@@ -1092,6 +1108,86 @@ async def start_design(body: DesignIn, x_orc_job: str = Header(default="")) -> d
         "status": "iniciado",
         "siguiente": "Terminá tu turno: el usuario ve el progreso y las capturas, y el sistema te despierta al terminar.",
     }
+
+
+@app.post("/repos/pedir", dependencies=[Depends(auth)])
+async def ask_repos(body: ReposIn, x_orc_job: str = Header(default="")) -> dict:
+    """Le pide al usuario los dos repos del proyecto (los crea él, decisión del 4/10/2026)."""
+    if not bot:
+        raise HTTPException(503, "pedir los repos necesita el bot de Telegram")
+    chat_id = _chat_for(x_orc_job) or body.chat_id
+    if not chat_id:
+        raise HTTPException(400, "no sé a qué chat mandar el pedido")
+    state = await asyncio.to_thread(process.load, body.project)
+    if state is None:
+        raise HTTPException(409, f"«{body.project}» es anterior al proceso: no tiene repos.")
+    state["repos_pedidos"] = {"front": body.front, "back": body.back}
+    await asyncio.to_thread(process.save, body.project, state, "repos pedidos al usuario")
+    await bot.send(chat_id, (
+        f"📦 Para «{body.project}» necesito dos repos en GitHub, privados y con las ramas "
+        f"{config.PROD_BRANCH} y {config.DEV_BRANCH}:\n\n"
+        f"- Front: {body.front}\n- Back: {body.back}\n\n"
+        "Cuando estén, mandame los dos links."
+    ))
+    return {"status": "enviado", "siguiente": "Terminá el turno: cuando el usuario mande los links, registralos con orc-repos registrar."}
+
+
+@app.post("/repos/registrar", dependencies=[Depends(auth)])
+async def register_repos(body: ReposIn) -> dict:
+    """Verifica y clona los repos que creó el usuario: espejo (con GitHub) y clon de trabajo."""
+    state = await asyncio.to_thread(process.load, body.project)
+    if state is None:
+        raise HTTPException(409, f"«{body.project}» es anterior al proceso: no tiene repos.")
+    registered = dict(state.get("repos") or {})
+    for repo, url in (("front", body.front), ("back", body.back)):
+        if repo in registered:
+            continue
+        try:
+            registered[repo] = await asyncio.to_thread(code.register, body.project, repo, url)
+        except (code.CodeError, subprocess.TimeoutExpired) as exc:
+            if registered:
+                state["repos"] = registered
+                await asyncio.to_thread(process.save, body.project, state, "repos registrados (en parte)")
+            raise HTTPException(409, f"No pude registrar el repo {repo}: {exc}") from exc
+    state["repos"] = registered
+    await asyncio.to_thread(process.save, body.project, state, "repos registrados")
+    return {"status": "registrados", "repos": registered,
+            "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
+
+
+@app.post("/merge", dependencies=[Depends(auth)])
+async def merge(body: MergeIn) -> dict:
+    """Mergea una tarea en develop, solo si el Líder técnico y QA la aprobaron en
+    Desarrollo/<tarea>.md (decisión del usuario: merges automáticos con esas dos)."""
+    try:
+        task = code.valid_task(body.tarea)
+    except code.CodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    state = await asyncio.to_thread(process.load, body.project)
+    if not state or not state.get("repos"):
+        raise HTTPException(409, f"«{body.project}» no tiene repos registrados.")
+    task_file = vault.project_path(body.project) / "Desarrollo" / f"{task}.md"
+    verdicts = code.reviews(task_file)
+    missing = [code.REVIEWS[k] for k, v in verdicts.items() if not code.approved(v)]
+    if missing:
+        detail = "; ".join(f"{code.REVIEWS[k]}: {v or 'todavía no revisó'}" for k, v in verdicts.items())
+        raise HTTPException(409, f"No se mergea {task}: falta la aprobación de {', '.join(missing)} ({detail}).")
+    merged = {}
+    with runner.project_lock(body.project):
+        for repo in state["repos"]:
+            try:
+                commit = await asyncio.to_thread(code.merge_task, body.project, repo, task)
+            except (code.CodeError, subprocess.SubprocessError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            if commit:
+                merged[repo] = commit
+        if not merged:
+            raise HTTPException(409, f"{task} no tiene cambios para mergear en ningún repo.")
+        note = (f"\n\n## Merge\n\n{datetime.now().astimezone():%d/%m/%Y %H:%M} · en {config.DEV_BRANCH}: "
+                + ", ".join(f"{r} {c}" for r, c in merged.items()) + "\n")
+        await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + note, encoding="utf-8"))
+        await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"merge de {task} en {body.project}")
+    return {"status": "mergeada", "tarea": task, "merges": merged}
 
 
 @app.post("/autoprueba", dependencies=[Depends(auth)])

@@ -5,9 +5,11 @@ Programás el back del producto en el stack que fijó el ADR, contra el contrato
 contrato: son del Líder técnico. Si algo del contrato no cierra, lo señalás.
 
 ## Dónde trabajás
-- En el **repo del back**, que crea DevOps en la fase 4. La instrucción te da la ruta y
-  la tarea (`T-NNN` del `10 - Plan de Trabajo`).
-- Si no hay repo, decilo y terminá: el código no va al vault.
+- En el **repo del back**, que el sistema ya dejó en la rama de tu tarea (`T-NNN`
+  del `10 - Plan de Trabajo`): ver «Tu código y tu terminal».
+- Si te llaman sin tarea y sin repo, decilo y terminá: el código no va al vault.
+- Cuando terminás, el Líder técnico revisa tu cambio y QA lo valida. Si alguno pide
+  cambios, te vuelven a llamar con la misma tarea: corregí en la misma rama.
 - Una tarea por vez, completa: código, tests y lo que pida su definición de terminado.
 
 ## Antes de cada tarea, leé

@@ -24,6 +24,26 @@ verificar. Cuanto antes participás, más barato es corregir.
 publicar. En **producción**, solo un *smoke test* después de cada despliegue: que levante,
 que el healthcheck responda y que el flujo principal funcione, sin crear datos de prueba.
 
+### Fase 7: validación de cada tarea
+Te llaman con la tarea (`T-NNN`): trabajás en los repos, ya en la rama de la tarea, con
+terminal (ver «Tu código y tu terminal»).
+- Corré los tests del proyecto y verificá los criterios de aceptación de la tarea (el
+  `10` y tus casos del `11`). Si falta un test importante, podés agregarlo en la rama;
+  **no cambies el código de la tarea**: si algo falla, lo reportás.
+- Escribí **solo tu sección** en `Desarrollo/T-NNN.md` del vault (si no existe, crealo
+  con un título `# T-NNN`), con este formato exacto, que el sistema lee para mergear:
+
+```
+## Validación de QA
+
+- <qué corriste y qué dio, criterio por criterio>
+
+**Veredicto:** Aprobada
+```
+
+  o `**Veredicto:** Requiere cambios`, con qué falla y cómo reproducirlo. Si ya había una
+  validación tuya anterior, reemplazala. No toques la sección del Líder técnico.
+
 ### Fase 8: release
 - Plan de regresión en desarrollo, *smoke test* de producción y checklist de salida.
 

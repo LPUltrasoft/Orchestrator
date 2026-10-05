@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Mergea una tarea en develop cuando el Líder técnico y QA la aprobaron.
+set -euo pipefail
+usage() {
+  cat <<'EOF'
+orc-merge — mergea en develop la rama de una tarea, en los repos donde tenga cambios.
+
+USO
+  orc-merge <proyecto> <T-NNN>
+
+  Solo mergea si en el vault, en Desarrollo/<T-NNN>.md, la «Revisión técnica» (Líder
+  técnico) y la «Validación de QA» dicen «**Veredicto:** Aprobada». Si no, dice qué
+  falta. Si hay conflictos con develop, el desarrollador tiene que resolverlos.
+
+SALIDA
+  JSON con los commits de merge por repo.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 2 ]] && { usage >&2; exit 64; }
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-merge
+orc_post "/merge" "$(orc_json "project=$1" "tarea=$2")"

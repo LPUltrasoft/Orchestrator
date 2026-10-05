@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, vault
+from . import code, config, vault
 
 log = logging.getLogger("orchestrator.runner")
 
@@ -257,6 +257,7 @@ CLAUDE_TOOLS = "Read,Write,Edit,Glob,Grep"
 # Herramienta de Claude -> (nombre en agy, parámetro en agy, parámetro en Claude): así el
 # progreso en vivo y el diagnóstico de denegaciones son los mismos para los dos motores.
 _CLAUDE_AS_AGY = {
+    "Bash": ("run_command", "CommandLine", "command"),
     "Read": ("view_file", "AbsolutePath", "file_path"),
     "Write": ("write_to_file", "TargetFile", "file_path"),
     "Edit": ("replace_file_content", "TargetFile", "file_path"),
@@ -310,10 +311,19 @@ async def run_claude(
     on_step: StepCallback | None = None,
     mcps: tuple[str, ...] = (),
     network_retries: int = 2,
+    code: dict | None = None,
+    extra_read: list[Path] | None = None,
 ) -> dict:
     """Corre un agente con el CLI de Claude Code, aislado de la configuración personal
-    del usuario, y devuelve su resultado con el mismo formato que run_agy."""
+    del usuario, y devuelve su resultado con el mismo formato que run_agy.
+
+    `code` (los roles que programan, etapa 3): {"edit": [...], "read": [...],
+    "writable": [...], "env": {...}}. Le da Bash, pero dentro del sandbox nativo de
+    Claude Code: escribe solo en `writable`, el home está oculto (salvo los toolchains) y
+    la red solo llega a los registros de paquetes."""
     servers = {name: config.MCP_SERVERS[name] for name in mcps}
+    edit_dirs = [Path(p) for p in (code or {}).get("edit", [cwd])]
+    read_dirs = [config.VAULT_PATH, *[Path(p) for p in (code or {}).get("read", [])], *(extra_read or [])]
     argv = [
         config.CLAUDE_BIN, "-p",
         "--output-format", "stream-json", "--verbose",
@@ -324,15 +334,36 @@ async def run_claude(
         # proyecto) y no deja escribir archivos de configuración.
         "--restricted", "--strict-mcp-config", "--disable-slash-commands",
         "--permission-mode", "dontAsk",
-        "--tools", CLAUDE_TOOLS,
-        "--add-dir", str(config.VAULT_PATH),
+        "--tools", CLAUDE_TOOLS + (",Bash" if code else ""),
+        *(arg for d in {*read_dirs, *edit_dirs} - {cwd} for arg in ("--add-dir", str(d))),
         # --tools dice qué herramientas existen, no les da permiso: en dontAsk todo lo
         # no permitido se deniega, incluso escribir en la propia carpeta. Los permisos van
-        # acotados: leer solo el vault, escribir solo en la carpeta del proyecto, y las
-        # herramientas de sus MCP de a una. ("//" = ruta absoluta en las reglas.)
-        "--allowedTools", f"Read(/{config.VAULT_PATH.resolve()}/**)", f"Edit(/{cwd.resolve()}/**)",
+        # acotados: leer el vault (y los repos), escribir solo en la carpeta del proyecto
+        # (o sus repos), y las herramientas de sus MCP de a una. ("//" = ruta absoluta.)
+        "--allowedTools",
+        *(f"Read(/{d.resolve()}/**)" for d in read_dirs),
+        *(f"Edit(/{d.resolve()}/**)" for d in edit_dirs),
         *(f"mcp__{name}__{tool}" for name, server in servers.items() for tool in server["tools"]),
+        # Bash completo, porque el límite es el sandbox (abajo), no una lista de comandos:
+        # sin esta regla, en dontAsk se deniega todo lo que no es trivial (un heredoc, por
+        # ejemplo), y con allowUnsandboxedCommands=false ningún comando sale de la jaula.
+        *(["Bash"] if code else []),
     ]
+    if code:
+        # El sandbox nativo (bubblewrap): sin él, Bash correría con todo el usuario. Si no
+        # puede arrancar, no corre nada (failIfUnavailable), y el agente no puede pedir
+        # correr algo afuera (allowUnsandboxedCommands). Un TMPDIR propio lo rompe: usa
+        # el de Claude (/tmp/claude-<uid>).
+        argv += ["--settings", json.dumps({"sandbox": {
+            "enabled": True, "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False,
+            "filesystem": {
+                "denyRead": ["~/"],
+                "allowRead": [str(p) for p in [*code["writable"], *code.get("read", []), *config.SANDBOX_TOOLCHAINS]],
+                "allowWrite": [str(p) for p in code["writable"]],
+            },
+            "network": {"allowedDomains": list(config.SANDBOX_DOMAINS)},
+        }})]
     if servers:
         argv += ["--mcp-config", json.dumps({"mcpServers": {n: s["config"] for n, s in servers.items()}})]
     else:
@@ -347,6 +378,7 @@ async def run_claude(
     process = await asyncio.create_subprocess_exec(
         *argv,
         cwd=str(cwd),
+        env={**os.environ, **(code or {}).get("env", {})},
         # El prompt va por stdin: los de los agentes son largos.
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -412,7 +444,7 @@ async def run_claude(
                 prompt=DENIED_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
                 session_id=data["conversation_id"], timeout=timeout,
                 denied_retries=denied_retries - 1, on_step=on_step, mcps=mcps,
-                network_retries=network_retries,
+                network_retries=network_retries, code=code, extra_read=extra_read,
             )
         raise RuntimeError(f"claude denegó herramientas: {detail}")
     if (data["status"] != "SUCCESS" and _NETWORK_ERROR.search(data["response"])
@@ -425,7 +457,7 @@ async def run_claude(
             prompt=NETWORK_RETRY_PROMPT, model=model, effort=effort, cwd=cwd,
             session_id=data["conversation_id"], timeout=timeout,
             denied_retries=denied_retries, on_step=on_step, mcps=mcps,
-            network_retries=network_retries - 1,
+            network_retries=network_retries - 1, code=code, extra_read=extra_read,
         )
     if data["status"] != "SUCCESS" and not data["response"].strip():
         raise RuntimeError(f"claude terminó con error: {stderr[-500:] or result_event}")
@@ -458,8 +490,47 @@ def _tools_note(role: str) -> str:
     )
 
 
-def build_subagent_prompt(role: str, project: str, instruction: str, project_path: Path) -> str:
+def _code_note(project: str, task: str, repos: list[str], project_path: Path) -> str:
+    trees = "\n".join(f"- Repo **{r}**: `{code.worktree(project, r)}`" for r in repos)
+    return f"""# Tu código y tu terminal
+
+Trabajás la tarea **{task}**. Tus repos ya están en la rama `{task}`, creada desde
+`develop`:
+
+{trees}
+
+Tenés **Bash**, pero dentro de un sandbox:
+- Escribís solo en tus repos y en la caché del proyecto. El resto de la PC es de solo
+  lectura y tu home está oculto.
+- La red solo llega a los registros de paquetes (npm, Maven, PyPI): `npm install`
+  funciona; bajar cosas de otros sitios, no.
+- **No hay Docker.** Los tests de integración con base de datos real los corre el
+  sistema (y Jenkins); vos corré los unitarios y todo lo que no necesite contenedores.
+- Nada global (`npm -g`, `sudo`, `pip install --user`): todo como dependencia del proyecto.
+
+Git:
+- Commiteá en la rama `{task}`, con mensajes que empiecen con `{task}:` y digan qué
+  hiciste. No cambies de rama ni toques `.git/config`.
+- El repo no tiene remoto: **el sistema sube la rama y abre el pull request** cuando
+  terminás. Antes de terminar, corré los tests y dejá todo commiteado.
+
+Los documentos del proyecto están en el vault, en `{project_path}`: leelos. Escribí ahí
+solo lo que tu rol pida (por ejemplo, la validación de QA en `Desarrollo/{task}.md`).
+"""
+
+
+def build_subagent_prompt(
+    role: str, project: str, instruction: str, project_path: Path,
+    task: str | None = None, repos: list[str] | None = None,
+) -> str:
     """Prompt autocontenido: el sub-agente no ve la charla de Telegram."""
+    where = (
+        f"- **Código:** en tus repos (ver «Tu código y tu terminal»); tu directorio de trabajo ya es {'tu repo' if len(repos or []) == 1 else 'la carpeta con los repos'}.\n"
+        f"- **Carpeta del proyecto en el vault:** `{project_path}`"
+        if task else
+        f"- **Carpeta del proyecto (escribí acá):** `{project_path}`\n"
+        "- Tu directorio de trabajo actual ya es la carpeta del proyecto."
+    )
     return f"""{config.prompt_for(role)}
 
 ---
@@ -468,8 +539,7 @@ def build_subagent_prompt(role: str, project: str, instruction: str, project_pat
 
 - **Vault de Obsidian:** `{config.VAULT_PATH}`
 - **Proyecto:** {project}
-- **Carpeta del proyecto (escribí acá):** `{project_path}`
-- Tu directorio de trabajo actual ya es la carpeta del proyecto.
+{where}
 
 Antes de escribir, listá la carpeta y leé los documentos que ya existan.
 
@@ -505,6 +575,7 @@ mantiene el sistema) **ni un ADR aprobado** (si una decisión cambia, va un ADR 
 
 {_tools_note(role)}
 
+{_code_note(project, task, repos or [], project_path) if task else ""}
 # Tarea
 
 {instruction}
@@ -517,6 +588,8 @@ para qué). Es lo único que va a leer el Director de Proyecto.
 """
 
 
+# Roles que, sin programar, leen el código del proyecto (revisión, seguridad, datos).
+REVIEW_ROLES = ("lider_tecnico", "seguridad", "dba", "qa", "devops")
 IMAGES_DIR = "Diseño/Imágenes"
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -549,27 +622,92 @@ def _collect_images(conversation_id: str | None, since: float, project_path: Pat
     return copied
 
 
+def _code_run(role: str, project: str, repos: list[str], project_path: Path) -> tuple[dict, Path]:
+    """Permisos y entorno de un rol que programa: sus repos, la caché del proyecto (npm,
+    Maven, pip… sin tocar las del usuario) y el vault para leer y anotar."""
+    trees = [code.worktree(project, r) for r in repos]
+    cache = code.cache_dir(project)
+    # Los commits dicen qué agente los hizo (si no, git toma la identidad del usuario).
+    name = f"{role.capitalize()} (agente)"
+    identity = {"GIT_AUTHOR_NAME": name, "GIT_COMMITTER_NAME": name,
+                "GIT_AUTHOR_EMAIL": f"{role}@agentes.orchestrator", "GIT_COMMITTER_EMAIL": f"{role}@agentes.orchestrator"}
+    run = {
+        "edit": [*trees, project_path],
+        "read": [code.code_dir(project)],
+        "writable": [*trees, cache],
+        "env": {
+            "npm_config_cache": str(cache / "npm"), "npm_config_update_notifier": "false",
+            "XDG_CACHE_HOME": str(cache / "xdg"), "PIP_CACHE_DIR": str(cache / "pip"),
+            "MAVEN_OPTS": f"-Dmaven.repo.local={cache / 'm2'}", "GRADLE_USER_HOME": str(cache / "gradle"),
+            "PLAYWRIGHT_BROWSERS_PATH": str(cache / "ms-playwright"),
+            **identity,
+        },
+    }
+    return run, trees[0] if len(trees) == 1 else code.code_dir(project)
+
+
+def _publish(project: str, role: str, task: str, repos: list[str], instruction: str,
+             response: str, project_path: Path) -> list[dict]:
+    """Sube la rama de cada repo con cambios, abre su PR y deja el diff en el vault para
+    el Líder técnico (Desarrollo/<tarea> - <repo>.diff)."""
+    published = []
+    for repo in repos:
+        result = code.finish_task(project, repo, task)
+        if result["commits"]:
+            body = (f"Tarea {task}, hecha por el rol {role}.\n\n**Instrucción:**\n{instruction[:3000]}\n\n"
+                    f"**Resumen del agente:**\n{response[:3000]}\n\n🤖 Generado por el equipo de agentes del Orchestrator")
+            result["pr"] = code.open_pr(project, repo, task, f"{task}: {instruction.splitlines()[0][:80]}", body)
+            folder = project_path / "Desarrollo"
+            folder.mkdir(exist_ok=True)
+            (folder / f"{task} - {repo}.diff").write_text(code.diff(project, repo, task), encoding="utf-8")
+        published.append(result)
+    return published
+
+
 async def invoke_subagent(
-    role: str, project: str, instruction: str, on_step: StepCallback | None = None
+    role: str, project: str, instruction: str, on_step: StepCallback | None = None,
+    task: str | None = None,
 ) -> dict:
-    """Corre un sub-agente y verifica con git lo que realmente cambió."""
+    """Corre un sub-agente y verifica con git lo que realmente cambió. Con `task`, el rol
+    programa en los repos del proyecto (etapa 3) y el sistema publica lo que hizo."""
     if role not in config.ROLES:
         raise ValueError(f"rol desconocido: {role}. Válidos: {', '.join(config.ROLES)}")
+    repos: list[str] = []
+    if task:
+        if role not in config.CODE_ROLES or config.ENGINES[role] != "claude":
+            raise ValueError(f"«{role}» no programa en los repos: --tarea es para {', '.join(config.CODE_ROLES)}.")
+        task = code.valid_task(task)
+        repos = [r for r in config.CODE_REPOS[role] if code.worktree(project, r).exists()]
+        if not repos:
+            raise ValueError(f"«{project}» todavía no tiene repos: primero hay que pedírselos al usuario y registrarlos con orc-repos.")
 
     project_path = await asyncio.to_thread(vault.project_dir, project)
+    published: list[dict] = []
     with project_lock(project):
         before = await asyncio.to_thread(vault.snapshot)
         started = time.time()
-        prompt = build_subagent_prompt(role, project, instruction, project_path)
+        code_run, cwd = None, project_path
+        if task:
+            for repo in repos:
+                await asyncio.to_thread(code.prepare_task, project, repo, task)
+            code_run, cwd = _code_run(role, project, repos, project_path)
+        prompt = build_subagent_prompt(role, project, instruction, project_path, task, repos)
+        # Los que revisan (Líder técnico, Seguridad…) leen el código aunque no lo toquen.
+        extra_read = ([code.code_dir(project)] if not task and role in REVIEW_ROLES
+                      and code.code_dir(project).exists() else None)
         if config.ENGINES[role] == "claude":
             result = await run_claude(
                 prompt=prompt, model=config.MODELS[role], effort=config.EFFORTS[role],
-                cwd=project_path, on_step=on_step, mcps=config.MCPS[role],
+                cwd=cwd, on_step=on_step, mcps=config.MCPS[role], code=code_run, extra_read=extra_read,
             )
         else:
             result = await run_agy(
                 prompt=prompt, model=config.MODELS[role], cwd=project_path,
                 caller=role, on_step=on_step,
+            )
+        if task:
+            published = await asyncio.to_thread(
+                _publish, project, role, task, repos, instruction, result.get("response", ""), project_path
             )
         images: list[Path] = []
         if role == "imagenes":
@@ -603,6 +741,7 @@ async def invoke_subagent(
         "commit": commit_hash,
         "usage": result.get("usage", {}),
         "images": [vault.relative(p) for p in images],
+        "codigo": published,
         # Señal de alerta: dijo que escribió pero git no vio nada.
         "suspect_no_writes": claimed and not files_changed,
     }

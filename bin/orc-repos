@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Repos de código de un proyecto: pedírselos al usuario y registrarlos cuando los crea.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+orc-repos — los dos repos de código de un proyecto (front y back), que crea el usuario.
+
+USO
+  orc-repos <proyecto> pedir <nombre-front> <nombre-back>
+      Le manda al usuario por Telegram qué repos crear: privados, con las ramas
+      master y develop. Los nombres salen del 06 de DevOps. Después terminá el turno.
+
+  orc-repos <proyecto> registrar <link-front> <link-back>
+      Cuando el usuario manda los links: el sistema verifica que sean privados, los
+      clona y los deja listos para que los roles programen con --tarea.
+
+EJEMPLO
+  orc-repos "Turnos Medicos" pedir turnos-front turnos-back
+  orc-repos "Turnos Medicos" registrar https://github.com/LPUltrasoft/turnos-front https://github.com/LPUltrasoft/turnos-back
+
+SALIDA
+  JSON con el resultado. Si algo falla (por ejemplo, un repo público), dice qué.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 4 ]] && { usage >&2; exit 64; }
+
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-repos
+PROJECT="$1"; ACTION="$2"; FRONT="$3"; BACK="$4"
+case "$ACTION" in
+  pedir)     orc_post "/repos/pedir" "$(orc_json "project=$PROJECT" "front=$FRONT" "back=$BACK")" ;;
+  registrar) orc_post "/repos/registrar" "$(orc_json "project=$PROJECT" "front=$FRONT" "back=$BACK")" ;;
+  *) usage >&2; exit 64 ;;
+esac

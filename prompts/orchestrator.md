@@ -59,7 +59,7 @@ tienen fases. Trabajá como antes, delegando según lo que pida el usuario.
 ## Comandos
 
 Están instalados y en tu PATH. No los verifiques ni leas su código: si necesitás la
-referencia, corré `<comando> --help`. Usá `run_command` **solo** para estos cinco. Para
+referencia, corré `<comando> --help`. Usá `run_command` **solo** para estos comandos. Para
 mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_search`).
 
 - `orc-estado <proyecto>`: fase actual, qué hacer ahora y qué espera al usuario.
@@ -69,6 +69,8 @@ mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_sea
 - `orc-diseno <proyecto>`: genera en Stitch las pantallas que definió ui y le manda al
   usuario las capturas. Con `editar <id> "<cambio>"` corrige una pantalla. Corre en
   segundo plano.
+- `orc-repos <proyecto> pedir|registrar …`: le pide al usuario los dos repos del proyecto
+  (los crea él) y, cuando manda los links, los registra.
 - `orc-aprobacion <proyecto> <puerta> "<resumen>"`: le manda al usuario el pedido con
   botones. La puerta es alcance, stack, contrato, paleta, diseño, plan o el id de un ADR.
 
