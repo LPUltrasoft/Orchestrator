@@ -118,6 +118,15 @@ SANDBOX_DOMAINS = tuple(d.strip() for d in os.environ.get(
 # Toolchains instalados en el home (el sandbox oculta el home): solo lectura.
 SANDBOX_TOOLCHAINS = tuple(p for p in (Path.home() / ".nvm",) if p.exists())
 
+# Jenkins (nativo, como orc-ci, solo en 127.0.0.1). El token de API lo carga el usuario
+# en el .env; la credencial de GitHub, en Jenkins (por ID).
+JENKINS_URL = os.environ.get("JENKINS_URL", "").rstrip("/")
+JENKINS_USER = os.environ.get("JENKINS_USER", "")
+JENKINS_TOKEN = os.environ.get("JENKINS_TOKEN", "")
+JENKINS_CREDENTIALS_ID = os.environ.get("JENKINS_CREDENTIALS_ID", "github")
+# orc-merge exige además que el último build de la rama esté en verde (si tiene Jenkinsfile).
+MERGE_REQUIRES_CI = os.environ.get("MERGE_REQUIRES_CI", "true").lower() == "true"
+
 # Autoprueba de los motores (al arrancar y una vez por día, a SELFTEST_HOUR hora local),
 # con el modelo más barato de cada uno.
 SELFTEST_AGY_MODEL = os.environ.get("SELFTEST_AGY_MODEL", "gemini-3.8-flash-low")

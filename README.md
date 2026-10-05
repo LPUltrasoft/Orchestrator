@@ -64,6 +64,7 @@ sobrescribe si no lo puede parsear):
     "allow": [
       "command(orc-delegate)", "command(orc-mesa)", "command(orc-aprobacion)",
       "command(orc-estado)", "command(orc-diseno)", "command(orc-repos)",
+      "command(orc-merge)", "command(orc-ci)",
       "command(which)", "command(ls)", "command(cat)", "command(head)", "command(grep)",
       "command(git log)", "command(git status)", "command(git diff)",
       "mcp(context7/*)"

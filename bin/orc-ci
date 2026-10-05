@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Estado de Jenkins para una tarea.
+set -euo pipefail
+usage() {
+  cat <<'EOF'
+orc-ci — estado de Jenkins para la rama de una tarea, en cada repo del proyecto.
+
+USO
+  orc-ci <proyecto> <T-NNN | develop | master>
+
+SALIDA
+  JSON por repo: si la rama tiene job (necesita Jenkinsfile), el resultado del último
+  build (SUCCESS, FAILURE…), si está corriendo, el link y, si falló, el final del log.
+  orc-merge no mergea si alguna rama con Jenkinsfile no está en verde.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -lt 2 ]] && { usage >&2; exit 64; }
+source "$(dirname "$(readlink -f "$0")")/_orc_common.sh"
+orc_require_orchestrator orc-ci
+PROJECT=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")
+orc_get "/ci/$PROJECT/$2"

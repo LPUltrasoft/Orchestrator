@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import code, config, design, drive, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
+from . import code, config, design, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -914,6 +914,7 @@ async def health() -> dict:
         "vault_push": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _push.items()},
         "drive": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _drive.items()},
         "autoprueba": selftest.last(),
+        "jenkins": (await asyncio.to_thread(jenkins.whoami)) if jenkins.configured() else None,
         "projects": vault.list_projects(),
         "models": config.MODELS,
     }
@@ -1151,7 +1152,14 @@ async def register_repos(body: ReposIn) -> dict:
             raise HTTPException(409, f"No pude registrar el repo {repo}: {exc}") from exc
     state["repos"] = registered
     await asyncio.to_thread(process.save, body.project, state, "repos registrados")
-    return {"status": "registrados", "repos": registered,
+    jobs = []
+    if jenkins.configured():
+        try:
+            jobs = await asyncio.to_thread(jenkins.ensure_jobs, body.project, registered)
+        except (jenkins.JenkinsError, httpx.HTTPError) as exc:
+            log.warning("no pude crear los jobs de Jenkins de %s: %s", body.project, exc)
+            jobs = [f"error: {exc}"]
+    return {"status": "registrados", "repos": registered, "jenkins": jobs,
             "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
 
 
@@ -1172,6 +1180,19 @@ async def merge(body: MergeIn) -> dict:
     if missing:
         detail = "; ".join(f"{code.REVIEWS[k]}: {v or 'todavía no revisó'}" for k, v in verdicts.items())
         raise HTTPException(409, f"No se mergea {task}: falta la aprobación de {', '.join(missing)} ({detail}).")
+    if config.MERGE_REQUIRES_CI and jenkins.configured():
+        red = []
+        for repo in state["repos"]:
+            try:
+                status = await asyncio.to_thread(jenkins.branch_status, body.project, repo, task)
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, f"No pude consultar Jenkins: {exc}") from exc
+            build = status.get("build")
+            if status["job"] and (not build or build.get("building") or build.get("result") != "SUCCESS"):
+                state_text = "corriendo" if build and build.get("building") else (build or {}).get("result") or "sin build todavía"
+                red.append(f"{repo}: {state_text}")
+        if red:
+            raise HTTPException(409, f"No se mergea {task}: Jenkins no está en verde ({'; '.join(red)}). Consultá el detalle con orc-ci.")
     merged = {}
     with runner.project_lock(body.project):
         for repo in state["repos"]:
@@ -1187,7 +1208,36 @@ async def merge(body: MergeIn) -> dict:
                 + ", ".join(f"{r} {c}" for r, c in merged.items()) + "\n")
         await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + note, encoding="utf-8"))
         await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"merge de {task} en {body.project}")
+    for repo in merged:
+        await asyncio.to_thread(runner._notify_jenkins, body.project, repo)
     return {"status": "mergeada", "tarea": task, "merges": merged}
+
+
+@app.get("/ci/{project}/{task}", dependencies=[Depends(auth)])
+async def ci_status(project: str, task: str) -> dict:
+    """Estado de Jenkins para la rama de una tarea (o develop/master), por repo. Lo usa orc-ci."""
+    if not jenkins.configured():
+        raise HTTPException(409, "Jenkins no está configurado (JENKINS_URL, JENKINS_USER, JENKINS_TOKEN en el .env).")
+    state = await asyncio.to_thread(process.load, project)
+    if not state or not state.get("repos"):
+        raise HTTPException(409, f"«{project}» no tiene repos registrados.")
+    result = {}
+    for repo in state["repos"]:
+        try:
+            status = await asyncio.to_thread(jenkins.branch_status, project, repo, task)
+            build = status.get("build")
+            entry = {"job": status["job"], "resultado": None, "corriendo": False, "url": None}
+            if build:
+                entry.update(resultado=build.get("result"), corriendo=build.get("building"), url=build.get("url"))
+                if build.get("result") not in (None, "SUCCESS"):
+                    entry["log"] = await asyncio.to_thread(jenkins.console_tail, project, repo, task)
+            elif not status["job"]:
+                entry["nota"] = "la rama no tiene job: no tiene Jenkinsfile o Jenkins todavía no la escaneó"
+                entry["escaneo"] = await asyncio.to_thread(jenkins.scan_log, project, repo, 15)
+        except httpx.HTTPError as exc:
+            entry = {"error": str(exc)}
+        result[repo] = entry
+    return {"proyecto": project, "rama": task, "repos": result}
 
 
 @app.post("/autoprueba", dependencies=[Depends(auth)])

@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import code, config, vault
+from . import code, config, jenkins, vault
 
 log = logging.getLogger("orchestrator.runner")
 
@@ -660,8 +660,19 @@ def _publish(project: str, role: str, task: str, repos: list[str], instruction: 
             folder = project_path / "Desarrollo"
             folder.mkdir(exist_ok=True)
             (folder / f"{task} - {repo}.diff").write_text(code.diff(project, repo, task), encoding="utf-8")
+            _notify_jenkins(project, repo)
         published.append(result)
     return published
+
+
+def _notify_jenkins(project: str, repo: str) -> None:
+    """Después de un push: Jenkins no puede enterarse solo (no hay webhook), le avisa el gateway."""
+    if not jenkins.configured():
+        return
+    try:
+        jenkins.scan(project, repo)
+    except Exception as exc:  # noqa: BLE001 — el push ya está hecho; Jenkins igual revisa cada 15 min
+        log.warning("no pude avisarle a Jenkins del push de %s/%s: %s", project, repo, exc)
 
 
 async def invoke_subagent(
