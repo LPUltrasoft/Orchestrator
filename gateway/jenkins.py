@@ -13,6 +13,7 @@ El token de API del usuario va en el `.env` (JENKINS_USER, JENKINS_TOKEN).
 from __future__ import annotations
 
 import logging
+import time
 from xml.sax.saxutils import escape
 
 import httpx
@@ -158,20 +159,6 @@ def last_number(project: str, repo: str, branch: str) -> int:
     return (status.get("build") or {}).get("number") or 0
 
 
-def wait_build(project: str, repo: str, branch: str, after: int, timeout: int = 1800) -> dict | None:
-    """Espera un build nuevo (número > after) de la rama y que termine. None si no llega
-    (por ejemplo, la rama no tiene Jenkinsfile)."""
-    import time
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(15)
-        status = branch_status(project, repo, branch)
-        build = status.get("build")
-        if build and build.get("number", 0) > after and not build.get("building"):
-            return build
-    return None
-
-
 def console_tail(project: str, repo: str, branch: str, lines: int = 60) -> str:
     with _client() as client:
         response = client.get(f"{_job_path(project, repo, branch)}/lastBuild/consoleText")
@@ -184,6 +171,41 @@ def scan_log(project: str, repo: str, lines: int = 40) -> str:
     with _client() as client:
         response = client.get(f"{_job_path(project, repo)}/indexing/consoleText")
         return "\n".join(response.text.splitlines()[-lines:]) if response.status_code < 400 else ""
+
+
+def scan_failure(log_text: str) -> str | None:
+    """Si el escaneo de ese log falló, la causa en pocas líneas (lo que dijo git); si
+    terminó bien o todavía corre, None. La API de Jenkins no expone el resultado del
+    escaneo: sale de la última línea del log («Finished: FAILURE»)."""
+    lines = log_text.strip().splitlines()
+    if not lines or lines[-1].strip() != "Finished: FAILURE":
+        return None
+    cause = [line.strip().removeprefix("stderr:").strip() for line in lines
+             if line.strip().startswith(("stderr:", "remote:", "fatal:"))]
+    cause = [line for line in cause if line]
+    if not cause:
+        cause = [next((line for line in lines if line.startswith(("FATAL:", "ERROR:"))), lines[-1])]
+    return "\n".join(cause[:4])[:600]
+
+
+def credential_problem(cause: str) -> bool:
+    """El escaneo falló porque la credencial no alcanza: token vencido, o sin acceso al repo."""
+    return any(s in cause for s in ("403", "401", "not granted", "Authentication failed",
+                                    "Invalid username or password", "Repository not found"))
+
+
+def scan_and_wait(project: str, repo: str, timeout: int = 120) -> str | None:
+    """Escanea el repo ya y espera el resultado: la causa si falló (ver scan_failure),
+    None si anduvo o si no terminó a tiempo."""
+    before = scan_log(project, repo, 400)
+    scan(project, repo)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(3)
+        current = scan_log(project, repo, 400)
+        if current != before and current.rstrip().rsplit("\n", 1)[-1].startswith("Finished:"):
+            return scan_failure(current)
+    return None
 
 
 def whoami() -> str | None:

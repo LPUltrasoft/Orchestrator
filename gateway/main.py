@@ -60,6 +60,12 @@ _progress: dict[str, progress.Progress] = {}
 # Pedidos pausados por cuota, persistidos: sobreviven a un reinicio mientras esperan.
 _PAUSED_FILE = config.STATE_DIR / "paused.json"
 _resumers: set[asyncio.Task] = set()
+# Builds de develop que se siguen después de un merge, persistidos: si Jenkins no puede
+# leer el repo, el seguimiento espera a que se arregle aunque el gateway se reinicie.
+_CI_FILE = config.STATE_DIR / "ci_develop.json"
+CI_POLL = 20  # segundos entre consultas a Jenkins
+CI_RESCAN = 300  # mientras el escaneo falla, se lo vuelve a pedir cada 5 minutos
+CI_BUILD_WAIT = 1800  # con el escaneo andando, cuánto se espera el build de develop
 # Existe mientras el gateway corre: si al arrancar ya estaba, el apagado anterior no fue
 # limpio (corte de luz, cuelgue, SIGKILL).
 _RUNNING_MARK = config.STATE_DIR / "en_marcha"
@@ -330,6 +336,30 @@ def _save_paused(entries: list[dict]) -> None:
     tmp = _PAUSED_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(_PAUSED_FILE)
+
+
+# Sin await entre leer y guardar: dos seguimientos (front y back) no se pisan.
+def _ci_pending() -> list[dict]:
+    try:
+        return json.loads(_CI_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def _ci_get(project: str, repo: str) -> dict | None:
+    return next((e for e in _ci_pending() if e["proyecto"] == project and e["repo"] == repo), None)
+
+
+def _ci_drop(project: str, repo: str, add: dict | None = None) -> None:
+    """Saca el seguimiento de ese repo; con `add`, lo reemplaza por ese."""
+    entries = [e for e in _ci_pending() if (e["proyecto"], e["repo"]) != (project, repo)]
+    tmp = _CI_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(entries + ([add] if add else []), ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_CI_FILE)
+
+
+def _ci_put(entry: dict) -> None:
+    _ci_drop(entry["proyecto"], entry["repo"], add=entry)
 
 
 def _short(text: str, limit: int = 70) -> str:
@@ -765,11 +795,13 @@ async def _merge_after_approval(chat_id: str, from_name: str | None, project: st
         )))
         return
     merges = ", ".join(f"{r} {c}" for r, c in result["merges"].items())
-    await bot.send(chat_id, f"🔀 Mergeado en {config.DEV_BRANCH}: {merges}. Jenkins lo está construyendo.")
+    await bot.send(chat_id, f"🔀 Mergeado en {config.DEV_BRANCH}: {merges}. Le avisé a Jenkins; "
+                            "te aviso cuando termine el build.")
     _start_job(ChatIn(chat_id=chat_id, from_name=from_name, text=(
         f"(Mensaje del sistema) {by} aprobó el merge de {task} en «{project}» y el sistema lo mergeó en "
-        f"{config.DEV_BRANCH} ({merges}). Jenkins construye develop y despliega desarrollo; si falla, el "
-        "sistema te avisa con el log. Contale al usuario en una línea y terminá el turno."
+        f"{config.DEV_BRANCH} ({merges}). El sistema sigue el build de develop y le avisa el resultado al "
+        "usuario; si falla, a vos también, con el log. Contale al usuario en una línea que quedó mergeado "
+        "(sin decir que Jenkins ya está compilando: eso lo confirma el aviso) y terminá el turno."
     )))
 
 
@@ -875,6 +907,10 @@ async def lifespan(_: FastAPI):
     for entry in _load_paused():
         log.info("pausa guardada: retomo %s %s", entry["id"], quota.when(datetime.fromisoformat(entry["resume_at"])))
         _schedule_resume(entry)
+    if jenkins.configured():
+        for entry in _ci_pending():
+            log.info("retomo el seguimiento de %s de %s/%s (%s)", config.DEV_BRANCH, entry["proyecto"], entry["repo"], entry["tarea"])
+            _watch(entry["proyecto"], entry["repo"])
 
     poller = None
     if config.TELEGRAM_BOT_TOKEN:
@@ -942,6 +978,7 @@ async def health() -> dict:
         "drive": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _drive.items()},
         "autoprueba": selftest.last(),
         "jenkins": (await asyncio.to_thread(jenkins.whoami)) if jenkins.configured() else None,
+        "ci_develop": [{k: e.get(k) for k in ("proyecto", "repo", "tarea", "aviso")} for e in _ci_pending()],
         "projects": vault.list_projects(),
         "models": config.MODELS,
     }
@@ -1252,15 +1289,49 @@ async def register_repos(body: ReposIn) -> dict:
     state["repos"] = registered
     ports = await asyncio.to_thread(process.allocate_ports, state)
     await asyncio.to_thread(process.save, body.project, state, "repos registrados")
-    jobs = []
+    jobs, unreadable = [], {}
     if jenkins.configured():
         try:
             jobs = await asyncio.to_thread(jenkins.ensure_jobs, body.project, registered)
         except (jenkins.JenkinsError, httpx.HTTPError) as exc:
             log.warning("no pude crear los jobs de Jenkins de %s: %s", body.project, exc)
             jobs = [f"error: {exc}"]
-    return {"status": "registrados", "repos": registered, "jenkins": jobs, "puertos": ports,
-            "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
+        else:
+            # Que Jenkins pueda leer los repos se sabe recién al escanearlos: mejor ahora
+            # que después del primer merge.
+            for repo in registered:
+                try:
+                    cause = await asyncio.to_thread(jenkins.scan_and_wait, body.project, repo)
+                except (jenkins.JenkinsError, httpx.HTTPError) as exc:
+                    log.warning("no pude escanear %s/%s en Jenkins: %s", body.project, repo, exc)
+                    continue
+                if cause:
+                    unreadable[repo] = cause
+    result = {"status": "registrados", "repos": registered, "jenkins": jobs, "puertos": ports,
+              "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
+    if unreadable:
+        await _alert(_scan_alert(body.project, registered, unreadable,
+                                 "Hasta que lo arregles, Jenkins no va a construir develop ni master."))
+        result["jenkins_no_puede_leer"] = unreadable
+        result["siguiente"] += (" Jenkins no puede leer " + ", ".join(unreadable) + ": el usuario ya recibió "
+                                "el aviso con cómo arreglarlo. No frena el trabajo en las ramas de tarea.")
+    return result
+
+
+def _scan_alert(project: str, repos: dict[str, dict], problems: dict[str, str], after: str) -> str:
+    """Aviso de que Jenkins no puede leer repos de un proyecto, con la causa y cómo arreglarlo."""
+    names = " y ".join(f"{r} ({repos[r]['github']})" for r in problems)
+    text = f"⚠️ Jenkins no puede leer {'el repo' if len(problems) == 1 else 'los repos'} {names} de «{project}»:\n"
+    text += "".join(f"\n{r}: {cause}" for r, cause in problems.items())
+    if any(jenkins.credential_problem(c) for c in problems.values()):
+        owners = sorted({repos[r]["github"].split("/")[0] for r in problems})
+        text += (
+            f"\n\nLa credencial «{config.JENKINS_CREDENTIALS_ID}» de Jenkins no tiene acceso (o venció). Un token "
+            "fine-grained de GitHub cubre los repos de un solo dueño: tiene que tener como Resource owner a "
+            f"{' y '.join(owners)}, con Contents de solo lectura. Cargalo en Jenkins → Manage Jenkins → "
+            f"Credentials → «{config.JENKINS_CREDENTIALS_ID}» → Update."
+        )
+    return f"{text}\n\n{after}"
 
 
 class MergeError(Exception):
@@ -1307,9 +1378,10 @@ async def _merge_task(project: str, task: str, chat_id: str | None) -> dict:
     for repo in merged:
         await asyncio.to_thread(runner._notify_jenkins, project, repo)
         if previous.get(repo) is not None:
-            _track_background(_watch_develop(chat_id, project, task, repo, previous[repo]))
+            _ci_put({"proyecto": project, "repo": repo, "tarea": task, "previo": previous[repo], "chat_id": chat_id})
+            _watch(project, repo)
     return {"status": "mergeada", "tarea": task, "merges": merged,
-            "siguiente": "Jenkins construye develop: si falla, el sistema te avisa con el log."}
+            "siguiente": "El sistema sigue el build de develop: si falla, les avisa a vos y al usuario, con el log."}
 
 
 @app.post("/merge", dependencies=[Depends(auth)])
@@ -1343,24 +1415,90 @@ def _track_background(coro) -> None:
     task.add_done_callback(_background.discard)
 
 
-async def _watch_develop(chat_id: str | None, project: str, task: str, repo: str, previous: int) -> None:
-    """Sigue el build de develop que dispara un merge. Lo anota en la tarea y, si falla,
-    avisa al usuario y despierta al Director para que pida el arreglo."""
+_ci_watching: set[tuple[str, str]] = set()
+
+
+def _watch(project: str, repo: str) -> None:
+    """Arranca el seguimiento de develop de ese repo, si no hay uno andando: el que anda
+    relee ci_develop.json en cada vuelta, así que toma un merge nuevo solo."""
+    if (project, repo) not in _ci_watching:
+        _ci_watching.add((project, repo))
+        _track_background(_watch_develop(project, repo))
+
+
+async def _watch_develop(project: str, repo: str) -> None:
+    """Sigue el build de develop que dispara un merge (anotado en ci_develop.json) hasta que
+    termina. Si Jenkins no puede ni leer el repo (credencial sin acceso o vencida), avisa
+    con la causa y sigue esperando: cuando se arregla, el build sale solo. Si el escaneo
+    anda pero el build no llega, avisa y deja de esperar."""
+    waited = since_scan = 0
     try:
-        build = await asyncio.to_thread(jenkins.wait_build, project, repo, config.DEV_BRANCH, previous)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("no pude seguir el build de develop de %s/%s: %s", project, repo, exc)
-        return
-    if build is None:
-        return  # sin Jenkinsfile en develop, o no llegó a tiempo
+        while True:
+            await asyncio.sleep(CI_POLL)
+            entry = _ci_get(project, repo)
+            if not entry:
+                return
+            try:
+                status = await asyncio.to_thread(jenkins.branch_status, project, repo, config.DEV_BRANCH)
+                build = status.get("build")
+                if build and build.get("number", 0) > entry["previo"]:
+                    if build.get("building"):
+                        continue
+                    _ci_drop(project, repo)
+                    await _develop_built(entry, build)
+                    return
+                cause = jenkins.scan_failure(await asyncio.to_thread(jenkins.scan_log, project, repo, 400))
+            except (httpx.HTTPError, jenkins.JenkinsError) as exc:  # Jenkins reiniciándose: se reintenta
+                log.warning("no pude consultar Jenkins por %s/%s: %s", project, repo, exc)
+                continue
+            if cause:
+                waited = 0
+                if entry.get("aviso") != cause:
+                    entry["aviso"] = cause
+                    _ci_put(entry)
+                    state = await asyncio.to_thread(process.load, project) or {}
+                    await _alert(_scan_alert(project, state.get("repos", {}), {repo: cause}, (
+                        f"El merge de {entry['tarea']} ya está en {config.DEV_BRANCH}: cuando Jenkins pueda "
+                        "leer el repo, el build sale solo y te aviso.")))
+                since_scan += CI_POLL
+                if since_scan >= CI_RESCAN:
+                    since_scan = 0
+                    with suppress(httpx.HTTPError, jenkins.JenkinsError):
+                        await asyncio.to_thread(jenkins.scan, project, repo)
+                continue
+            if entry.pop("aviso", None):
+                _ci_put(entry)
+                await _alert(f"✅ Jenkins ya puede leer {repo} de «{project}»: espero el build de {config.DEV_BRANCH}.")
+            waited += CI_POLL
+            if waited >= CI_BUILD_WAIT:
+                _ci_drop(project, repo)
+                await _develop_missing(entry)
+                return
+    except Exception:  # noqa: BLE001 — que un error raro no se lleve el aviso en silencio
+        log.exception("error inesperado siguiendo develop de %s/%s", project, repo)
+        await _alert(f"⚠️ Se cortó el seguimiento del build de {config.DEV_BRANCH} de «{project}» ({repo}) "
+                     "por un error del gateway: mirá Jenkins a mano.")
+    finally:
+        _ci_watching.discard((project, repo))
+
+
+async def _develop_built(entry: dict, build: dict) -> None:
+    """Terminó el build de develop después de un merge: se anota en la tarea; si falló, se
+    avisa al usuario y se despierta al Director para que pida el arreglo."""
+    project, repo, task, chat_id = entry["proyecto"], entry["repo"], entry["tarea"], entry.get("chat_id")
     result = build.get("result")
     task_file = vault.project_path(project) / "Desarrollo" / f"{task}.md"
     if task_file.exists():
         line = (f"\n- Jenkins, {config.DEV_BRANCH} de {repo} después del merge: "
                 f"{'✅' if result == 'SUCCESS' else '❌'} {result} ({build.get('url')})\n")
-        await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + line, encoding="utf-8"))
-        await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"Jenkins: {task} en {config.DEV_BRANCH} de {repo}")
+        try:  # la nota es lo de menos: que no se lleve el aviso ni el avance de fase
+            await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + line, encoding="utf-8"))
+            await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"Jenkins: {task} en {config.DEV_BRANCH} de {repo}")
+        except (OSError, RuntimeError) as exc:
+            log.warning("no pude anotar el build de %s en %s: %s", task, task_file, exc)
     if result == "SUCCESS":
+        if task in config.MERGE_NEEDS_APPROVAL:  # el usuario aprobó ese merge: espera el resultado
+            await _alert(f"✅ Jenkins en verde en {config.DEV_BRANCH} de «{project}» ({repo}) con {task}.")
         if task == "esqueleto":
             await _maybe_finish_skeleton(chat_id, project)
         return
@@ -1372,6 +1510,43 @@ async def _watch_develop(chat_id: str | None, project: str, task: str, repo: str
             f"después de mergear {task} (el usuario ya vio el log). Final del log:\n{tail[-2500:]}\n\n"
             "Qué hacer: delegá el arreglo con orc-delegate --tarea (una tarea nueva de arreglo, o la "
             "misma si corresponde), con el log en la instrucción, y después revisión, validación y merge."
+        )))
+
+
+async def _develop_missing(entry: dict) -> None:
+    """Jenkins lee el repo pero develop no se construyó: casi seguro, no tiene Jenkinsfile."""
+    project, repo, task, chat_id = entry["proyecto"], entry["repo"], entry["tarea"], entry.get("chat_id")
+    minutes = CI_BUILD_WAIT // 60
+    await _alert(f"⚠️ Jenkins lee bien {repo} de «{project}», pero {config.DEV_BRANCH} no se construyó en "
+                 f"{minutes} minutos después de mergear {task}. Lo más probable: no tiene Jenkinsfile en la raíz.")
+    if chat_id:
+        _start_job(ChatIn(chat_id=chat_id, text=(
+            f"(Mensaje del sistema) {config.DEV_BRANCH} del repo {repo} de «{project}» no se construyó en "
+            f"{minutes} minutos después de mergear {task}, aunque Jenkins lee el repo (el usuario ya lo sabe). "
+            f"Qué hacer: mirá con orc-ci \"{project}\" {config.DEV_BRANCH} y, si falta el Jenkinsfile, delegá "
+            "el arreglo al devops con orc-delegate --tarea."
+        )))
+
+
+async def _maybe_finish_skeleton(chat_id: str | None, project: str) -> None:
+    """Fase 4 sin puerta: con el esqueleto en develop y Jenkins en verde en todos los
+    repos, el proyecto pasa a la fase 5 y se despierta al Director."""
+    state = await asyncio.to_thread(process.load, project)
+    if not state or state.get("fase") != 4:
+        return
+    for repo in state.get("repos", {}):
+        status = await asyncio.to_thread(jenkins.branch_status, project, repo, config.DEV_BRANCH)
+        build = status.get("build")
+        if not build or build.get("building") or build.get("result") != "SUCCESS":
+            return  # otro repo todavía no terminó: su propio seguimiento vuelve a llamar acá
+    new_phase = process.advance_after_skeleton(state)
+    await asyncio.to_thread(process.save, project, state, f"esqueleto en develop con Jenkins en verde: fase {new_phase}")
+    if chat_id:
+        current = process.phase(new_phase)
+        _start_job(ChatIn(chat_id=chat_id, text=(
+            f"(Mensaje del sistema) El esqueleto de «{project}» quedó en develop y Jenkins está en verde: "
+            f"el proyecto pasó a la fase {current.label}. Contale al usuario en pocas líneas, con el puerto "
+            f"de desarrollo ({state.get('puertos', {}).get('desarrollo')}). Qué hacer ahora: {current.guide}"
         )))
 
 
