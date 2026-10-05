@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import code, config, design, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
+from . import code, config, design, diagram, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -469,8 +469,11 @@ async def _run_orchestrator(job_id: str, body: ChatIn) -> None:
             await _pause(
                 body.chat_id,
                 "(Mensaje del sistema) Se renovó la cuota. Retomá la tarea que quedó en "
-                f"pausa: delegá en {paused['role']} sobre el proyecto «{paused['project']}» "
-                f"con esta instrucción:\n\n{paused['instruction']}",
+                f"pausa: delegá en {paused['role']} sobre el proyecto «{paused['project']}»"
+                + (f" con --tarea {paused['tarea']}" if paused.get("tarea") else "")
+                + (" (ya había empezado: lo que alcanzó a escribir está en el vault o en su rama, que "
+                   "lo continúe)" if paused.get("a_mitad") else "")
+                + f" con esta instrucción:\n\n{paused['instruction']}",
                 body.from_name,
                 paused["windows"],
                 label=f"continuar: {paused['role']} en «{paused['project']}»",
@@ -935,6 +938,26 @@ async def chat(body: ChatIn) -> dict:
     return {"job_id": job_id, "status": "queued" if queued else "running"}
 
 
+def _pause_delegation(job_id: str, live, role: str, body: DelegateIn, low: list, midway: bool = False) -> None:
+    """Pausa una delegación por cuota: queda agendada para cuando se renueve y el Director
+    cierra el turno. Lanza siempre la HTTPException que le explica qué pasó."""
+    until = quota.resume_at(low)
+    if job_id:
+        _paused_delegations[job_id] = {
+            "role": role, "project": body.project, "instruction": body.instruction,
+            "tarea": body.tarea, "windows": low, "a_mitad": midway,
+        }
+    if live:
+        live.agent_done(role, False, f"⏸️ en pausa por cuota hasta {quota.when(until)}")
+    raise HTTPException(
+        409,
+        ("Se agotó la cuota a mitad del trabajo (lo hecho quedó guardado como INCOMPLETO): " if midway
+         else "Cuota agotada: ")
+        + f"{quota.describe(low)}. El sistema pausó esta tarea y la retoma solo {quota.when(until)}. "
+        "No reintentes ni delegues otra cosa: decile al usuario que quedó en pausa.",
+    )
+
+
 @app.post("/agents/{role}", dependencies=[Depends(auth)])
 async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default="")) -> dict:
     """Invocación síncrona de un sub-agente. La usa `orc-delegate`."""
@@ -954,26 +977,21 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
         raise HTTPException(409, blocked)
     low = await quota.exhausted([role], force=True)
     if low:
-        until = quota.resume_at(low)
-        if x_orc_job:
-            _paused_delegations[x_orc_job] = {
-                "role": role, "project": body.project,
-                "instruction": body.instruction, "windows": low,
-            }
-        if live:
-            live.agent_done(role, False, f"⏸️ en pausa por cuota hasta {quota.when(until)}")
-        raise HTTPException(
-            409,
-            f"Cuota agotada: {quota.describe(low)}. El sistema pausó esta tarea y la "
-            f"retoma solo {quota.when(until)}. No reintentes ni delegues otra cosa: "
-            "decile al usuario que quedó en pausa.",
-        )
+        _pause_delegation(x_orc_job, live, role, body, low)
     try:
         result = await runner.invoke_subagent(
             role, body.project, body.instruction,
             on_step=(lambda step: live.step(role, step)) if live else None,
             task=body.tarea,
         )
+    except runner.QuotaExhausted as exc:
+        # Se agotó a mitad de la corrida: la misma pausa que si se hubiera agotado antes.
+        from_message = quota.from_limit_message(str(exc))
+        low = await quota.exhausted([role], force=True) or ([from_message] if from_message else [quota.Window(
+            quota.CLAUDE_FAMILY, "Five Hour Limit Remaining", 0,
+            datetime.now(timezone.utc) + timedelta(hours=1))])
+        log.warning("cuota agotada durante %s en %s: %s", role, body.project, exc)
+        _pause_delegation(x_orc_job, live, role, body, low, midway=True)
     except (ValueError, RuntimeError) as exc:
         if live:
             live.agent_done(role, False, f"⚠️ {str(exc)[:120]}")
@@ -989,7 +1007,33 @@ async def delegate(role: str, body: DelegateIn, x_orc_job: str = Header(default=
         )
     if result.get("images"):
         await _send_images(_chat_for(x_orc_job), result["images"])
+    if role == "dba" and any(Path(f).name.startswith(diagram.DATA_MODEL_DOC) for f in result.get("files_changed") or []):
+        await _send_er_diagram(_chat_for(x_orc_job), body.project)
     return result
+
+
+async def _send_er_diagram(chat_id: str | None, project: str) -> None:
+    """El DER del 03 como imagen, cada vez que el DBA lo toca (pedido del usuario)."""
+    if not bot or not chat_id:
+        return
+    docs = sorted(vault.project_path(project).glob(f"{diagram.DATA_MODEL_DOC}*.md"))
+    blocks = diagram.er_blocks(docs[0].read_text(encoding="utf-8")) if docs else []
+    if not blocks:
+        log.info("el DBA tocó el 03 de %s pero no tiene un erDiagram", project)
+        return
+    for i, block in enumerate(blocks, 1):
+        caption = f"🗄️ DER de «{project}»" + (f" ({i}/{len(blocks)})" if len(blocks) > 1 else "")
+        try:
+            png = await asyncio.to_thread(diagram.render, block)
+            width, height = diagram.size(png)
+            # Grande como foto, Telegram la comprime y no se lee: va como archivo.
+            if max(width, height) > 2560:
+                await bot.send_document(chat_id, png, f"DER {code.slug(project)}{f'-{i}' if len(blocks) > 1 else ''}.png", caption)
+            else:
+                await bot.send_album(chat_id, [(png, caption)])
+        except (diagram.DiagramError, subprocess.SubprocessError, httpx.HTTPError, telegram.TelegramError) as exc:
+            log.error("no pude mandar el DER de %s: %s", project, exc)
+            await bot.send(chat_id, f"⚠️ No pude dibujar el DER de «{project}»: {str(exc)[:300]}")
 
 
 async def _send_images(chat_id: str | None, images: list[str]) -> None:

@@ -129,6 +129,9 @@ JENKINS_USER = os.environ.get("JENKINS_USER", "")
 JENKINS_TOKEN = os.environ.get("JENKINS_TOKEN", "")
 JENKINS_CREDENTIALS_ID = os.environ.get("JENKINS_CREDENTIALS_ID", "github")
 
+# Herramienta oficial de Mermaid (mmdc), para mandar el DER del DBA como imagen.
+MERMAID_DIR = Path(os.environ.get("MERMAID_DIR", Path.home() / ".local/share/orchestrator/mermaid"))
+
 # Autoprueba de los motores (al arrancar y una vez por día, a SELFTEST_HOUR hora local),
 # con el modelo más barato de cada uno.
 SELFTEST_AGY_MODEL = os.environ.get("SELFTEST_AGY_MODEL", "gemini-3.8-flash-low")

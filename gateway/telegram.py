@@ -181,6 +181,17 @@ class TelegramBot:
             if not result.get("ok"):
                 raise TelegramError(f"{method}: {result.get('error_code')} {result.get('description')}")
 
+    async def send_document(self, chat_id: str, content: bytes, filename: str, caption: str = "") -> None:
+        """Un archivo sin compresión (por ejemplo, un DER grande que como foto sería ilegible)."""
+        response = await self._client.post(
+            f"{self._url}/sendDocument",
+            data={"chat_id": chat_id, "caption": caption[:1024]},
+            files={"document": (filename, content, "application/octet-stream")},
+        )
+        result = response.json()
+        if not result.get("ok"):
+            raise TelegramError(f"sendDocument: {result.get('error_code')} {result.get('description')}")
+
     async def typing(self, chat_id: str) -> None:
         try:
             await self.call("sendChatAction", chat_id=chat_id, action="typing")

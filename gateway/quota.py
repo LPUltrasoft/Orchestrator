@@ -16,7 +16,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import config
@@ -195,6 +195,26 @@ async def exhausted(roles: list[str] | set[str], force: bool = False) -> list[Wi
             if not model or any(model in m for m in claude_models):
                 low.append(w)
     return low
+
+
+_RESETS = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([^)]+)\)", re.I)
+
+
+def from_limit_message(text: str, now: datetime | None = None) -> Window | None:
+    """La ventana agotada que nombra un mensaje de Claude como "You've hit your session
+    limit · resets 4:30am (America/Argentina/Buenos_Aires)": la próxima vez que sean esa hora."""
+    match = _RESETS.search(text or "")
+    if not match:
+        return None
+    hour, minute, ampm, tz = match.groups()
+    zone = ZoneInfo(tz)
+    now = (now or datetime.now(timezone.utc)).astimezone(zone)
+    resets = now.replace(hour=int(hour) % 12 + (12 if ampm.lower() == "pm" else 0),
+                         minute=int(minute or 0), second=0, microsecond=0)
+    if resets <= now:
+        resets += timedelta(days=1)
+    name = "Weekly Limit Remaining (all models)" if "weekly" in text.lower() else "Five Hour Limit Remaining"
+    return Window(CLAUDE_FAMILY, name, 0, resets)
 
 
 def resume_at(windows: list[Window]) -> datetime:

@@ -44,6 +44,16 @@ _NETWORK_ERROR = re.compile(
     r"|EAI_AGAIN|ECONNRESET|ETIMEDOUT|ENOTFOUND",
     re.I,
 )
+# Claude se queda sin cuota a mitad de una corrida (pasó el 5/10/2026 en la prueba de punta
+# a punta: "You've hit your session limit · resets 4:30am (…)"): no es un error del rol,
+# es una pausa. invoke_subagent commitea lo hecho y avisa con QuotaExhausted.
+_QUOTA_HIT = re.compile(r"hit your (session|weekly|usage|opus) limit|usage limit reached|limit reached.*resets", re.I)
+
+
+class QuotaExhausted(RuntimeError):
+    """La cuota del motor se agotó durante la corrida del rol."""
+
+
 NETWORK_RETRY_PROMPT = "Se cortó la conexión a mitad de tu trabajo. Seguí exactamente donde quedaste."
 NETWORK_RETRY_WAIT = int(os.environ.get("NETWORK_RETRY_WAIT", "60"))
 
@@ -434,6 +444,9 @@ async def run_claude(
 
     data = _claude_result(result_event)
     data["init"] = init
+    if data["status"] != "SUCCESS" and _QUOTA_HIT.search(data["response"] or ""):
+        data["quota_hit"] = True
+        return data
     denied = data["denied_actions"]
     if denied and not data["response"].strip():
         detail = _denied_detail(denied, last_by_tool)
@@ -721,7 +734,7 @@ async def invoke_subagent(
                 prompt=prompt, model=config.MODELS[role], cwd=project_path,
                 caller=role, on_step=on_step,
             )
-        if task:
+        if task and not result.get("quota_hit"):
             published = await asyncio.to_thread(
                 _publish, project, role, task, repos, instruction, result.get("response", ""), project_path
             )
@@ -737,6 +750,11 @@ async def invoke_subagent(
             vault.commit, role, project, files_changed, complete
         )
 
+    if result.get("quota_hit"):
+        raise QuotaExhausted(
+            f"se agotó la cuota de Claude durante el trabajo de {role} ({result.get('response', '')[:160]}). "
+            "Lo que alcanzó a escribir quedó commiteado como INCOMPLETO."
+        )
     if not complete:
         # agy puede cortar a mitad de camino (señal, timeout interno) y aun así
         # devolver JSON prolijo: un documento a medias no es un éxito.

@@ -32,7 +32,11 @@ propone el Líder técnico.
 - `03 - Modelo de Datos & Liquibase Changelogs.md`
 
 ## Contenido obligatorio
-- Diagrama entidad-relación en un bloque ```mermaid (erDiagram).
+- Diagrama entidad-relación en un bloque ```mermaid (erDiagram), **completo**: todas las
+  tablas, cada campo con su tipo y su marca `PK`, `FK` o `UK`, y todas las relaciones con
+  su cardinalidad y un nombre corto (`PACIENTES ||--o{ TURNOS : "reserva"`). Si hay más de
+  un esquema, un `erDiagram` por esquema. **El sistema lo dibuja y se lo manda al usuario
+  por Telegram cada vez que tocás el 03**: es lo que mira para revisar el modelo.
 - Catálogo de tablas: por cada una, columnas con tipo, nullability, defaults,
   claves y constraints, y una línea de para qué sirve.
 - DDL real y ejecutable en bloques ```sql.

@@ -146,43 +146,51 @@ def register(project: str, repo: str, url: str, remote: str | None = None) -> di
     bare, tree = mirror(project, repo), worktree(project, repo)
     if bare.exists() or tree.exists():
         raise CodeError(f"el repo {repo} de «{project}» ya está registrado ({tree}).")
-    bare.parent.mkdir(parents=True, exist_ok=True)
-    _run(["git", *_SAFE_GIT, "clone", "--quiet", "--bare", source, str(bare)], timeout=300)
-    mirror_git(project, repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
+    # Si algo falla a mitad de camino (por ejemplo, GitHub niega el push), se borra lo que
+    # creó este intento: si no, el reintento choca con "ya está registrado" (pasó en la
+    # prueba de punta a punta del 5/10/2026 y el usuario tuvo que borrar a mano).
+    try:
+        bare.parent.mkdir(parents=True, exist_ok=True)
+        _run(["git", *_SAFE_GIT, "clone", "--quiet", "--bare", source, str(bare)], timeout=300)
+        mirror_git(project, repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
 
-    # El usuario crea los repos con las dos ramas (master y develop): si están, no se toca
-    # nada. Si falta una, se crea sin pisar contenido; si el repo vino vacío, se siembra.
-    prod, dev = config.PROD_BRANCH, config.DEV_BRANCH
-    branches = mirror_git(project, repo, "branch", "--format=%(refname:short)").split()
-    created = []
-    if not branches:
-        seed = config.STATE_DIR / f"semilla-{slug(project)}-{repo}"
-        shutil.rmtree(seed, ignore_errors=True)
-        _run(["git", *_SAFE_GIT, "clone", "--quiet", str(bare), str(seed)])
-        (seed / "README.md").write_text(f"# {project} · {repo}\n\nRepo creado por el usuario; lo arma el equipo de agentes.\n")
-        (seed / ".gitignore").write_text("node_modules/\ndist/\n.env\n.cache/\ncoverage/\n")
-        _run(["git", *_SAFE_GIT, "-C", str(seed), "checkout", "--quiet", "-b", prod])
-        _run(["git", *_SAFE_GIT, "-C", str(seed), "add", "-A"])
-        _run(["git", *_SAFE_GIT, "-c", "user.name=Sistema Orchestrator", "-c", "user.email=sistema@orchestrator.local",
-              "-C", str(seed), "commit", "--quiet", "-m", "Inicio del repo"])
-        _run(["git", *_SAFE_GIT, "-C", str(seed), "push", "--quiet", "origin", prod])
-        shutil.rmtree(seed, ignore_errors=True)
-        created.append(prod)
-    elif prod not in branches:
-        head = mirror_git(project, repo, "symbolic-ref", "--short", "HEAD").strip()
-        mirror_git(project, repo, "branch", prod, head if head in branches else branches[0])
-        created.append(prod)
-    if dev not in mirror_git(project, repo, "branch", "--format=%(refname:short)").split():
-        mirror_git(project, repo, "branch", dev, prod)
-        created.append(dev)
-    if created:
-        mirror_git(project, repo, "push", "--quiet", "origin", *created, timeout=300)
+        # El usuario crea los repos con las dos ramas (master y develop): si están, no se toca
+        # nada. Si falta una, se crea sin pisar contenido; si el repo vino vacío, se siembra.
+        prod, dev = config.PROD_BRANCH, config.DEV_BRANCH
+        branches = mirror_git(project, repo, "branch", "--format=%(refname:short)").split()
+        created = []
+        if not branches:
+            seed = config.STATE_DIR / f"semilla-{slug(project)}-{repo}"
+            shutil.rmtree(seed, ignore_errors=True)
+            _run(["git", *_SAFE_GIT, "clone", "--quiet", str(bare), str(seed)])
+            (seed / "README.md").write_text(f"# {project} · {repo}\n\nRepo creado por el usuario; lo arma el equipo de agentes.\n")
+            (seed / ".gitignore").write_text("node_modules/\ndist/\n.env\n.cache/\ncoverage/\n")
+            _run(["git", *_SAFE_GIT, "-C", str(seed), "checkout", "--quiet", "-b", prod])
+            _run(["git", *_SAFE_GIT, "-C", str(seed), "add", "-A"])
+            _run(["git", *_SAFE_GIT, "-c", "user.name=Sistema Orchestrator", "-c", "user.email=sistema@orchestrator.local",
+                  "-C", str(seed), "commit", "--quiet", "-m", "Inicio del repo"])
+            _run(["git", *_SAFE_GIT, "-C", str(seed), "push", "--quiet", "origin", prod])
+            shutil.rmtree(seed, ignore_errors=True)
+            created.append(prod)
+        elif prod not in branches:
+            head = mirror_git(project, repo, "symbolic-ref", "--short", "HEAD").strip()
+            mirror_git(project, repo, "branch", prod, head if head in branches else branches[0])
+            created.append(prod)
+        if dev not in mirror_git(project, repo, "branch", "--format=%(refname:short)").split():
+            mirror_git(project, repo, "branch", dev, prod)
+            created.append(dev)
+        if created:
+            mirror_git(project, repo, "push", "--quiet", "origin", *created, timeout=300)
 
-    tree.parent.mkdir(parents=True, exist_ok=True)
-    cache_dir(project).mkdir(parents=True, exist_ok=True)
-    _run(["git", *_SAFE_GIT, "clone", "--quiet", "--branch", config.DEV_BRANCH, str(bare), str(tree)])
-    # Sin remoto: un agente no tiene adónde subir nada.
-    _run(["git", *_SAFE_GIT, "-C", str(tree), "remote", "remove", "origin"])
+        tree.parent.mkdir(parents=True, exist_ok=True)
+        cache_dir(project).mkdir(parents=True, exist_ok=True)
+        _run(["git", *_SAFE_GIT, "clone", "--quiet", "--branch", config.DEV_BRANCH, str(bare), str(tree)])
+        # Sin remoto: un agente no tiene adónde subir nada.
+        _run(["git", *_SAFE_GIT, "-C", str(tree), "remote", "remove", "origin"])
+    except BaseException:
+        shutil.rmtree(bare, ignore_errors=True)
+        shutil.rmtree(tree, ignore_errors=True)
+        raise
     return {"repo": repo, "github": info["nameWithOwner"], "local": str(tree)}
 
 
