@@ -23,8 +23,16 @@ SUBIDS=165536-231071     # a continuación de los del usuario (100000-165535)
 
 paso() { printf '\n▶ %s\n' "$*"; }
 
+# Si un paquete falla desde los repos de CachyOS (pasó el 4/10/2026: ningún espejo tenía
+# la firma de slirp4netns), reintenta desde el repo extra de Arch, que tiene los mismos.
+instalar() {
+  pacman -S --needed --noconfirm "$@" && return 0
+  echo "  Falló con los repos de CachyOS: reintento desde el repo extra de Arch."
+  pacman -S --needed --noconfirm "${@/#/extra/}"
+}
+
 paso "Paquetes: slirp4netns (red de los contenedores sin root)"
-pacman -S --needed --noconfirm slirp4netns
+instalar libslirp slirp4netns
 
 paso "Usuario $CI"
 if ! id "$CI" >/dev/null 2>&1; then
@@ -91,7 +99,7 @@ systemctl --user --machine="$CI@.host" daemon-reload
 systemctl --user --machine="$CI@.host" enable --now docker.service
 
 paso "Jenkins (paquete de Arch, Java 21) corriendo como $CI, solo en 127.0.0.1:$JENKINS_PORT"
-pacman -S --needed --noconfirm jenkins
+instalar jre21-openjdk jenkins
 CI_UID=$(id -u "$CI")
 install -d -o "$CI" -g "$CI" -m 750 "/home/$CI/jenkins" "/home/$CI/jenkins-cache"
 install -d -m 755 /etc/orchestrator
