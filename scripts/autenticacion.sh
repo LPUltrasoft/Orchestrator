@@ -62,6 +62,19 @@ docker_ci compose -f "$DESTINO/compose.yml" --env-file "$DESTINO/secretos.env" -
   up -d --wait --remove-orphans
 
 curl -fsS http://127.0.0.1:18490/health >/dev/null
+
+# El job que lo despliega con cada push a develop (solo develop y master, como todos). La
+# credencial la carga el usuario en Jenkins: un token de LucianoPal con lectura del repo.
+paso "Jenkins: job plataforma/autenticacion"
+(cd "$AQUI/gateway" && set -a && . ../.env && set +a && .venv/bin/python - "${AUTH_JENKINS_CREDENTIAL:-github LucianoPal}" <<'EOF'
+import sys
+sys.path.insert(0, "..")
+from gateway import jenkins
+if jenkins.configured():
+    jenkins.ensure_jobs("Plataforma", {"autenticacion": {"github": "LucianoPal/Autenticacion"}}, credentials=sys.argv[1])
+    print("  listo" if jenkins.scan_and_wait("Plataforma", "autenticacion") is None else "  ⚠️ Jenkins no puede leer el repo: revisar la credencial")
+EOF
+)
 echo
 echo "✅ Autenticación de desarrollo en orc-autenticacion:$TAG"
 echo "   PC: http://127.0.0.1:18490 · proyectos: http://autenticacion:3001 (red $RED)"
