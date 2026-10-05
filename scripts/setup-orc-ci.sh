@@ -126,6 +126,8 @@ User=$CI
 Group=$CI
 EnvironmentFile=
 EnvironmentFile=/etc/orchestrator/jenkins.env
+# Opcional: ORC_DEV_BIND, que define scripts/desarrollo-red-local.sh.
+EnvironmentFile=-/etc/orchestrator/desarrollo.env
 NoNewPrivileges=yes
 PrivateTmp=yes
 UNIT

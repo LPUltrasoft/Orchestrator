@@ -58,8 +58,10 @@ paso "Red compartida $RED"
 docker_ci network inspect "$RED" >/dev/null 2>&1 || docker_ci network create "$RED" >/dev/null
 
 paso "Levantando"
+# ORC_DEV_BIND: si el desarrollo está abierto a la red (scripts/desarrollo-red-local.sh).
+BIND_ENV=(); [[ -r /etc/orchestrator/desarrollo.env ]] && BIND_ENV=(--env-file /etc/orchestrator/desarrollo.env)
 docker_ci compose -f "$DESTINO/compose.yml" --env-file "$DESTINO/secretos.env" --env-file "$DESTINO/version.env" \
-  up -d --wait --remove-orphans
+  "${BIND_ENV[@]}" up -d --wait --remove-orphans
 
 curl -fsS http://127.0.0.1:18490/health >/dev/null
 

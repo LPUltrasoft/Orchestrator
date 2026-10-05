@@ -4,7 +4,8 @@
 # plataforma/autenticacion). Los secretos se generan al azar en el home de orc-ci.
 #
 # Los backs de los proyectos lo encuentran como http://autenticacion:3001, sumándose a la
-# red externa orc-autenticacion-dev. La base solo es alcanzable desde el servicio.
+# red externa orc-autenticacion-dev. La base publica el 18491, como las bases de desarrollo
+# de los proyectos: desde la PC y, si el desarrollo está abierto a la red, desde esas IPs.
 name: orc-autenticacion-dev
 
 x-logging: &logging
@@ -29,6 +30,9 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
+    # Para verla con un cliente (usuario postgres, clave en secretos.env de orc-ci).
+    ports:
+      - "${ORC_DEV_BIND:-127.0.0.1}:18491:5432"
     networks: [interna]
     restart: unless-stopped
     logging: *logging
@@ -57,8 +61,8 @@ services:
     deploy: { resources: { limits: { memory: 256m } } }
 
 networks:
-  interna:
-    internal: true
+  # No «internal»: Docker no publica puertos de una red interna (la base publica el suyo).
+  interna: {}
   compartida:
     name: orc-autenticacion-dev
     external: true

@@ -128,10 +128,13 @@ Nunca en el repo, ni en el vault, ni en archivos de la PC. Cada repo trae un
   `"${ORC_DEV_BIND:-127.0.0.1}:<puerto>:<puerto del contenedor>"`**: sin la variable queda
   solo local; Jenkins la define cuando el usuario abre desarrollo a su red, y el firewall
   de la PC deja entrar solo las IPs que eligió. Los healthchecks del pipeline, contra
-  `127.0.0.1`. La base de desarrollo no publica puertos. Producción va a usar los suyos.
-  Dejá en el `06` qué servicio usa cada puerto.
-- **Secretos de desarrollo**: valores de mentira definidos en el compose de desarrollo
-  (la base solo es alcanzable dentro de su red). Los de producción no van nunca al repo.
+  `127.0.0.1`. **La base de desarrollo también publica uno de esos puertos** (decisión del
+  usuario, 5/10/2026: la mira con su cliente), y el despliegue de develop la incluye en el
+  `up` (`--no-deps <base> <back>`): compose la recrea solo si cambió su configuración. La
+  base de producción no publica nunca. Dejá en el `06` qué servicio usa cada puerto.
+- **Secretos de desarrollo**: valores de mentira definidos en el compose de desarrollo (la
+  base la alcanzan solo la PC y las IPs que habilitó el usuario, y **sus datos nunca son
+  reales**). Los de producción no van nunca al repo.
 
 ### Salud y backups
 - Endpoint `/health` en el back (que verifique la base) y en el front.
