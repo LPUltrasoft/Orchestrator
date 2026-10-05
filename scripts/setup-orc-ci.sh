@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Prepara el usuario `orc-ci` con Docker SIN root. Ahí corre todo lo que construye o
-# ejecuta código escrito por los agentes: Jenkins, los tests de integración y los
-# ambientes de desarrollo y producción. Si algo escapara de un contenedor, queda
-# encerrado en ese usuario: sin acceso al home del usuario, sus credenciales ni el vault.
+# Prepara el usuario `orc-ci` con Docker SIN root, y Jenkins como servicio nativo
+# corriendo con ese usuario. Ahí corre todo lo que construye o ejecuta código escrito por
+# los agentes: los pipelines de Jenkins, los tests de integración y los ambientes de
+# desarrollo y producción. Si algo escapara, queda encerrado en `orc-ci`: sin acceso al
+# home del usuario, sus credenciales ni el vault.
+#
+# Jenkins queda instalado y andando; el asistente inicial, el usuario admin y las
+# credenciales (GitHub, token para el gateway) los carga el usuario a mano en la web.
 #
 # Correr UNA vez, desde tu usuario:   sudo ~/Documentos/Orchestrator/scripts/setup-orc-ci.sh
 # Se puede volver a correr: lo que ya está hecho, lo saltea.
@@ -14,7 +18,7 @@ CI=orc-ci
 DOCKER_VERSION=29.8.2   # la misma versión del Docker instalado
 EXTRAS_URL="https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-${DOCKER_VERSION}.tgz"
 EXTRAS_SHA256=707ebf6a5afd88104086e7b6749997b2366e816aeaf2c3ef2305b08fde9ee007
-GIT_DIR=/srv/orc-git     # espejos de los repos: del usuario, solo lectura para orc-ci
+JENKINS_PORT=8090        # el del paquete de Arch
 SUBIDS=165536-231071     # a continuación de los del usuario (100000-165535)
 
 paso() { printf '\n▶ %s\n' "$*"; }
@@ -86,10 +90,39 @@ for _ in $(seq 1 20); do systemctl --user --machine="$CI@.host" is-system-runnin
 systemctl --user --machine="$CI@.host" daemon-reload
 systemctl --user --machine="$CI@.host" enable --now docker.service
 
-paso "Espejos de los repos en $GIT_DIR (de $OWNER, solo lectura para $CI)"
-mkdir -p "$GIT_DIR"
-chown "$OWNER:$CI" "$GIT_DIR"
-chmod 2750 "$GIT_DIR"   # setgid: lo que se cree adentro hereda el grupo $CI
+paso "Jenkins (paquete de Arch, Java 21) corriendo como $CI, solo en 127.0.0.1:$JENKINS_PORT"
+pacman -S --needed --noconfirm jenkins
+CI_UID=$(id -u "$CI")
+install -d -o "$CI" -g "$CI" -m 750 "/home/$CI/jenkins" "/home/$CI/jenkins-cache"
+install -d -m 755 /etc/orchestrator
+# Un archivo propio en vez de editar /etc/conf.d/jenkins (que es del paquete).
+cat > /etc/orchestrator/jenkins.env <<ENV
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+JAVA_ARGS="-Xmx1g -Djava.awt.headless=true"
+JENKINS_HOME=/home/$CI/jenkins
+JENKINS_WAR=/usr/share/java/jenkins/jenkins.war
+JENKINS_COMMAND_LINE="\$JAVA \$JAVA_ARGS -jar \$JENKINS_WAR --webroot=/home/$CI/jenkins-cache --httpPort=$JENKINS_PORT --httpListenAddress=127.0.0.1"
+# Los builds usan el Docker sin root de $CI.
+XDG_RUNTIME_DIR=/run/user/$CI_UID
+DOCKER_HOST=unix:///run/user/$CI_UID/docker.sock
+PATH=/usr/local/bin:/usr/bin:/bin
+ENV
+mkdir -p /etc/systemd/system/jenkins.service.d
+cat > /etc/systemd/system/jenkins.service.d/orchestrator.conf <<UNIT
+[Unit]
+After=network-online.target user@$CI_UID.service
+Wants=network-online.target
+
+[Service]
+User=$CI
+Group=$CI
+EnvironmentFile=
+EnvironmentFile=/etc/orchestrator/jenkins.env
+NoNewPrivileges=yes
+PrivateTmp=yes
+UNIT
+systemctl daemon-reload
+systemctl enable --now jenkins.service
 
 paso "sudo: $OWNER puede actuar como $CI (no al revés)"
 rule="/etc/sudoers.d/orchestrator-ci"
@@ -101,5 +134,10 @@ paso "Verificación"
 for _ in $(seq 1 30); do sudo -u "$CI" /usr/local/bin/orc-ci-docker info >/dev/null 2>&1 && break; sleep 1; done
 sudo -u "$CI" /usr/local/bin/orc-ci-docker info --format '  Docker {{.ServerVersion}} · {{.SecurityOptions}}'
 sudo -u "$CI" /usr/local/bin/orc-ci-docker run --rm hello-world | grep -m1 "Hello from Docker"
+for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$JENKINS_PORT/login" && break; sleep 2; done
+printf '  Jenkins: %s (usuario %s)\n' "$(systemctl is-active jenkins)" "$(ps -o user= -p "$(systemctl show -p MainPID --value jenkins)")"
 echo
-echo "✅ Listo. $CI tiene Docker sin root; $OWNER lo maneja con: sudo -u $CI orc-ci-docker <comando>"
+echo "✅ Listo."
+echo "   Docker sin root de $CI: sudo -u $CI orc-ci-docker <comando>"
+echo "   Jenkins: http://127.0.0.1:$JENKINS_PORT"
+echo "   Contraseña inicial de Jenkins: sudo cat /home/$CI/jenkins/secrets/initialAdminPassword"
