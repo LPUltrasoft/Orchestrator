@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import autenticacion, code, config, design, diagram, drive, jenkins, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
+from . import autenticacion, code, config, design, diagram, drive, jenkins, jobs, mapa, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -289,6 +289,22 @@ async def _daily_selftest() -> None:
                 await _alert("\n\n".join(notes))
         except Exception:  # noqa: BLE001 — que un error raro no apague la autoprueba diaria
             log.exception("error inesperado en la autoprueba diaria")
+
+
+async def _update_map() -> None:
+    """Regenera el mapa de puertos y repos del vault (07). Un error no frena a quien lo llama."""
+    try:
+        if await asyncio.to_thread(mapa.update):
+            log.info("mapa de puertos y repos actualizado")
+    except Exception:  # noqa: BLE001
+        log.exception("no pude actualizar el mapa de puertos y repos")
+
+
+async def _map_refresher() -> None:
+    """Al arrancar y cada media hora: toma cambios de fase y contenedores que se cayeron."""
+    while True:
+        await _update_map()
+        await asyncio.sleep(1800)
 
 
 async def _check_drive() -> None:
@@ -925,7 +941,8 @@ async def lifespan(_: FastAPI):
         pusher = asyncio.create_task(_vault_pusher())
     unclean = _RUNNING_MARK.exists()
     _RUNNING_MARK.write_text(datetime.now(timezone.utc).isoformat())
-    monitors = [asyncio.create_task(_startup_checks(unclean)), asyncio.create_task(_daily_selftest())]
+    monitors = [asyncio.create_task(_startup_checks(unclean)), asyncio.create_task(_daily_selftest()),
+                asyncio.create_task(_map_refresher())]
 
     yield
 
@@ -1311,6 +1328,7 @@ async def register_repos(body: ReposIn) -> dict:
                     continue
                 if cause:
                     unreadable[repo] = cause
+    await _update_map()
     result = {"status": "registrados", "repos": registered, "jenkins": jobs, "puertos": ports,
               "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
     if unreadable:
@@ -1362,6 +1380,7 @@ async def auth_signup(body: AuthIn, x_orc_job: str = Header(default="")) -> dict
     entry = {**result, "admin": "admin"}
     state.setdefault("autenticacion", {})["desarrollo"] = entry
     await asyncio.to_thread(process.save, body.project, state, "alta en la autenticación de desarrollo")
+    await _update_map()
     if password:
         # Directo al usuario: la contraseña no pasa por el Director ni queda en el vault.
         text = (f"🔐 «{body.project}» ya tiene login en desarrollo (sociedad {result['idsociedad']}).\n\n"
@@ -1531,6 +1550,7 @@ async def _develop_built(entry: dict, build: dict) -> None:
     avisa al usuario y se despierta al Director para que pida el arreglo."""
     project, repo, task, chat_id = entry["proyecto"], entry["repo"], entry["tarea"], entry.get("chat_id")
     result = build.get("result")
+    await _update_map()
     task_file = vault.project_path(project) / "Desarrollo" / f"{task}.md"
     if task_file.exists():
         line = (f"\n- Jenkins, {config.DEV_BRANCH} de {repo} después del merge: "
