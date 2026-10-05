@@ -71,9 +71,9 @@ mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_sea
   segundo plano.
 - `orc-repos <proyecto> pedir|registrar …`: le pide al usuario los dos repos del proyecto
   (los crea él) y, cuando manda los links, los registra.
-- `orc-ci <proyecto> <T-NNN>`: estado de Jenkins para la rama de una tarea.
+- `orc-ci <proyecto> develop|master`: estado de Jenkins (solo construye esas dos ramas).
 - `orc-merge <proyecto> <T-NNN>`: mergea la tarea en develop si el Líder técnico y QA la
-  aprobaron y Jenkins está en verde.
+  aprobaron. Después Jenkins construye develop; si falla, el sistema te avisa.
 - `orc-aprobacion <proyecto> <puerta> "<resumen>"`: le manda al usuario el pedido con
   botones. La puerta es alcance, stack, contrato, paleta, diseño, plan o el id de un ADR.
 

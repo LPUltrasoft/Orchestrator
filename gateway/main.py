@@ -1164,7 +1164,7 @@ async def register_repos(body: ReposIn) -> dict:
 
 
 @app.post("/merge", dependencies=[Depends(auth)])
-async def merge(body: MergeIn) -> dict:
+async def merge(body: MergeIn, x_orc_job: str = Header(default="")) -> dict:
     """Mergea una tarea en develop, solo si el Líder técnico y QA la aprobaron en
     Desarrollo/<tarea>.md (decisión del usuario: merges automáticos con esas dos)."""
     try:
@@ -1180,19 +1180,14 @@ async def merge(body: MergeIn) -> dict:
     if missing:
         detail = "; ".join(f"{code.REVIEWS[k]}: {v or 'todavía no revisó'}" for k, v in verdicts.items())
         raise HTTPException(409, f"No se mergea {task}: falta la aprobación de {', '.join(missing)} ({detail}).")
-    if config.MERGE_REQUIRES_CI and jenkins.configured():
-        red = []
+    # El build de develop que había antes del merge: después se espera uno nuevo.
+    previous = {}
+    if jenkins.configured():
         for repo in state["repos"]:
             try:
-                status = await asyncio.to_thread(jenkins.branch_status, body.project, repo, task)
-            except httpx.HTTPError as exc:
-                raise HTTPException(503, f"No pude consultar Jenkins: {exc}") from exc
-            build = status.get("build")
-            if status["job"] and (not build or build.get("building") or build.get("result") != "SUCCESS"):
-                state_text = "corriendo" if build and build.get("building") else (build or {}).get("result") or "sin build todavía"
-                red.append(f"{repo}: {state_text}")
-        if red:
-            raise HTTPException(409, f"No se mergea {task}: Jenkins no está en verde ({'; '.join(red)}). Consultá el detalle con orc-ci.")
+                previous[repo] = await asyncio.to_thread(jenkins.last_number, body.project, repo, config.DEV_BRANCH)
+            except httpx.HTTPError:
+                previous[repo] = None
     merged = {}
     with runner.project_lock(body.project):
         for repo in state["repos"]:
@@ -1210,7 +1205,49 @@ async def merge(body: MergeIn) -> dict:
         await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"merge de {task} en {body.project}")
     for repo in merged:
         await asyncio.to_thread(runner._notify_jenkins, body.project, repo)
-    return {"status": "mergeada", "tarea": task, "merges": merged}
+        if previous.get(repo) is not None:
+            _track_background(_watch_develop(_chat_for(x_orc_job), body.project, task, repo, previous[repo]))
+    return {"status": "mergeada", "tarea": task, "merges": merged,
+            "siguiente": "Jenkins construye develop: si falla, el sistema te avisa con el log."}
+
+
+_background: set[asyncio.Task] = set()
+
+
+def _track_background(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def _watch_develop(chat_id: str | None, project: str, task: str, repo: str, previous: int) -> None:
+    """Sigue el build de develop que dispara un merge. Lo anota en la tarea y, si falla,
+    avisa al usuario y despierta al Director para que pida el arreglo."""
+    try:
+        build = await asyncio.to_thread(jenkins.wait_build, project, repo, config.DEV_BRANCH, previous)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("no pude seguir el build de develop de %s/%s: %s", project, repo, exc)
+        return
+    if build is None:
+        return  # sin Jenkinsfile en develop, o no llegó a tiempo
+    result = build.get("result")
+    task_file = vault.project_path(project) / "Desarrollo" / f"{task}.md"
+    if task_file.exists():
+        line = (f"\n- Jenkins, {config.DEV_BRANCH} de {repo} después del merge: "
+                f"{'✅' if result == 'SUCCESS' else '❌'} {result} ({build.get('url')})\n")
+        await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + line, encoding="utf-8"))
+        await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"Jenkins: {task} en {config.DEV_BRANCH} de {repo}")
+    if result == "SUCCESS":
+        return
+    tail = await asyncio.to_thread(jenkins.console_tail, project, repo, config.DEV_BRANCH, 25)
+    await _alert(f"❌ Jenkins falló en {config.DEV_BRANCH} de «{project}» ({repo}) después de mergear {task}.\n\n{tail[-1500:]}")
+    if chat_id:
+        _start_job(ChatIn(chat_id=chat_id, text=(
+            f"(Mensaje del sistema) Jenkins falló en {config.DEV_BRANCH} del repo {repo} de «{project}» "
+            f"después de mergear {task} (el usuario ya vio el log). Final del log:\n{tail[-2500:]}\n\n"
+            "Qué hacer: delegá el arreglo con orc-delegate --tarea (una tarea nueva de arreglo, o la "
+            "misma si corresponde), con el log en la instrucción, y después revisión, validación y merge."
+        )))
 
 
 @app.get("/ci/{project}/{task}", dependencies=[Depends(auth)])

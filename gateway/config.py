@@ -124,8 +124,6 @@ JENKINS_URL = os.environ.get("JENKINS_URL", "").rstrip("/")
 JENKINS_USER = os.environ.get("JENKINS_USER", "")
 JENKINS_TOKEN = os.environ.get("JENKINS_TOKEN", "")
 JENKINS_CREDENTIALS_ID = os.environ.get("JENKINS_CREDENTIALS_ID", "github")
-# orc-merge exige además que el último build de la rama esté en verde (si tiene Jenkinsfile).
-MERGE_REQUIRES_CI = os.environ.get("MERGE_REQUIRES_CI", "true").lower() == "true"
 
 # Autoprueba de los motores (al arrancar y una vez por día, a SELFTEST_HOUR hora local),
 # con el modelo más barato de cada uno.
