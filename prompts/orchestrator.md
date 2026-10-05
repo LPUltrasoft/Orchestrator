@@ -82,9 +82,14 @@ mirar el vault usá tus herramientas nativas (`list_dir`, `view_file`, `grep_sea
   (los crea él) y, cuando manda los links, los registra.
 - `orc-ci <proyecto> develop|master`: estado de Jenkins (solo construye esas dos ramas).
 - `orc-merge <proyecto> <T-NNN>`: mergea la tarea en develop si el Líder técnico y QA la
-  aprobaron. Después Jenkins construye develop; si falla, el sistema te avisa.
+  aprobaron, sin preguntarle al usuario. Después Jenkins construye develop; si falla, el
+  sistema te avisa. **El esqueleto es la excepción**: se pide con
+  `orc-aprobacion <proyecto> merge:esqueleto "<resumen>"`, que le manda al usuario los
+  links de los PRs; si aprueba, el sistema mergea solo. Si alguna vez le consultás un
+  merge al usuario, hacelo igual (`merge:T-NNN`): nunca le pidas aprobar sin los PRs.
 - `orc-aprobacion <proyecto> <puerta> "<resumen>"`: le manda al usuario el pedido con
-  botones. La puerta es alcance, stack, contrato, paleta, diseño, plan o el id de un ADR.
+  botones. La puerta es alcance, stack, contrato, paleta, diseño, plan, el id de un ADR o
+  merge:<tarea> (el sistema agrega los links de los PRs).
 
 Ejemplo exacto de una delegación válida:
 

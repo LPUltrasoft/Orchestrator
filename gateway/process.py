@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, palette, vault
+from . import code, config, palette, vault
 
 STATE_FILE = "Estado del Proyecto.md"
 ADR_DIR = "ADRs"
@@ -67,9 +67,12 @@ PHASES = (
           "y terminá el turno; cuando mande los links, registralos con orc-repos <proyecto> "
           "registrar <link-front> <link-back>. Después delegá en devops el esqueleto con "
           "--tarea esqueleto (proyecto base, Docker, compose, Jenkinsfile, healthcheck); que lo "
-          "revise lider_tecnico (Desarrollo/esqueleto - <repo>.diff), lo valide qa con --tarea "
-          "esqueleto, y mergealo con orc-merge <proyecto> esqueleto. Cuando Jenkins termine "
-          "develop en verde, el sistema pasa el proyecto a la fase 5 solo y te avisa."),
+          "revise lider_tecnico (Desarrollo/esqueleto - <repo>.diff) y lo valide qa con --tarea "
+          "esqueleto. Con los dos aprobados, pedí la aprobación del merge: orc-aprobacion "
+          "<proyecto> merge:esqueleto \"<resumen>\" (el sistema le agrega los links de los PRs; "
+          "el esqueleto no se mergea sin el usuario) y terminá el turno: si aprueba, el sistema "
+          "mergea solo. Cuando Jenkins termine develop en verde, el sistema pasa el proyecto a "
+          "la fase 5 y te avisa."),
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "revisor_ux_ui", "imagenes", "dba", "lider_tecnico",
                                      "devops", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
@@ -94,7 +97,8 @@ PHASES = (
           "frontend con --tarea T-NNN, con la tarea, sus criterios de aceptación y sus casos del "
           "11 en la instrucción; 2) que lider_tecnico revise el código (Desarrollo/T-NNN - "
           "<repo>.diff) y 3) qa la valide con --tarea T-NNN; 4) si los dos aprueban, orc-merge "
-          "<proyecto> T-NNN; si alguno pide cambios, volvé al desarrollador con lo que pidieron. "
+          "<proyecto> T-NNN, sin preguntarle al usuario; si alguno pide cambios, volvé al "
+          "desarrollador con lo que pidieron. "
           "Después del merge Jenkins construye develop y despliega desarrollo: si falla, el "
           "sistema te avisa con el log. Contale al usuario el avance de a varias tareas, no de "
           "a una. Cuando estén todas, avisale que desarrollo está listo para probar; el "
@@ -132,6 +136,10 @@ def _local(iso: str) -> str:
 
 def normalize_gate(gate: str) -> str:
     gate = gate.strip()
+    merge = re.fullmatch(r"(?i)merge:\s*(t-\d{3,}|esqueleto)", gate)
+    if merge:
+        task = merge.group(1)
+        return f"merge:{task.upper() if task.lower().startswith('t-') else 'esqueleto'}"
     if re.fullmatch(r"(?i)adr-\d{3}", gate):
         return gate.upper()
     gate = gate.lower()
@@ -139,6 +147,8 @@ def normalize_gate(gate: str) -> str:
 
 
 def gate_label(gate: str, project: str | None = None) -> str:
+    if gate.startswith("merge:"):
+        return f"Merge de {gate[6:]} en {config.DEV_BRANCH}"
     if gate.startswith("ADR-") and project:
         adr = next((a for a in list_adrs(project) if a["id"] == gate), None)
         return f"{gate} · {adr['title']}" if adr else gate
@@ -258,6 +268,20 @@ def validate_gate(project: str, state: dict | None, gate: str) -> str | None:
             return f"No existe {gate} en la carpeta «{ADR_DIR}» del proyecto."
         if adr["approved"]:
             return f"{gate} ya está aprobado."
+        return None
+    if gate.startswith("merge:"):
+        # Se pide recién con las dos revisiones aprobadas: el usuario no tiene que ver un
+        # pedido que todavía puede cambiar.
+        try:
+            code.valid_task(gate[6:])
+        except code.CodeError as exc:
+            return str(exc)
+        if not state.get("repos"):
+            return f"«{project}» no tiene repos registrados."
+        verdicts = code.reviews(vault.project_path(project) / "Desarrollo" / f"{gate[6:]}.md")
+        missing = [code.REVIEWS[k] for k, v in verdicts.items() if not code.approved(v)]
+        if missing:
+            return f"Antes de pedir el merge de {gate[6:]} tienen que aprobarlo: {', '.join(missing)}."
         return None
     if gate in EXTRA_GATES:
         if state["fase"] < EXTRA_GATES[gate]:

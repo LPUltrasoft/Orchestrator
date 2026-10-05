@@ -310,3 +310,28 @@ def reviews(task_file: Path) -> dict[str, str | None]:
 
 def approved(verdict: str | None) -> bool:
     return bool(verdict) and verdict.lower().startswith("aprobad")
+
+
+def find_pr(project: str, repo: str, task: str) -> str | None:
+    """El PR abierto de la tarea hacia develop, o None."""
+    if not config.GITHUB_CHECKS:
+        return None
+    name = parse_github(_origin_url(project, repo))
+    url = _run(["gh", "pr", "list", "--repo", name, "--head", task, "--base", config.DEV_BRANCH,
+                "--state", "open", "--json", "url", "--jq", ".[0].url"]).strip()
+    return url or None
+
+
+def diff_stat(project: str, repo: str, task: str) -> str | None:
+    """'12 archivos, +340 −20' de la tarea contra develop, o None si no cambia nada."""
+    mirror_git(project, repo, "fetch", "--quiet", "--prune", "origin", timeout=300)
+    if task not in mirror_git(project, repo, "branch", "--format=%(refname:short)").split():
+        return None
+    out = mirror_git(project, repo, "diff", "--shortstat", f"{config.DEV_BRANCH}...{task}").strip()
+    if not out:
+        return None
+    files = re.search(r"(\d+) files? changed", out)
+    plus = re.search(r"(\d+) insertions?", out)
+    minus = re.search(r"(\d+) deletions?", out)
+    return (f"{files.group(1) if files else 0} archivos, +{plus.group(1) if plus else 0} "
+            f"−{minus.group(1) if minus else 0}")

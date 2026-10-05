@@ -735,6 +735,9 @@ async def _on_telegram_callback(
             return
         await bot.answer_callback(callback_id, "✅ Aprobado")
         await bot.edit(chat_id, message_id, f"{original}\n\n✅ Aprobado por {by} · {stamp}")
+        if gate.startswith("merge:"):
+            await _merge_after_approval(chat_id, from_name, project, gate[6:], by)
+            return
         _start_job(ChatIn(
             chat_id=chat_id, from_name=from_name,
             text=process.after_approval_text(project, state, gate, by, advanced),
@@ -747,6 +750,27 @@ async def _on_telegram_callback(
             chat_id, message_id,
             f"{original}\n\n✏️ Pediste cambios · {stamp}\nEscribime cuáles en tu próximo mensaje.",
         )
+
+
+async def _merge_after_approval(chat_id: str, from_name: str | None, project: str, task: str, by: str) -> None:
+    """El usuario aprobó el merge: lo hace el sistema y le cuenta al Director."""
+    try:
+        result = await _merge_task(project, task, chat_id)
+    except MergeError as exc:
+        await bot.send(chat_id, f"⚠️ Aprobaste el merge de {task}, pero no se pudo hacer: {exc.detail}")
+        _start_job(ChatIn(chat_id=chat_id, from_name=from_name, text=(
+            f"(Mensaje del sistema) {by} aprobó el merge de {task} en «{project}», pero falló: {exc.detail}\n\n"
+            "Qué hacer: resolvelo (por ejemplo, que el desarrollador traiga develop a su rama y resuelva "
+            "los conflictos) y volvé a pedir la aprobación del merge."
+        )))
+        return
+    merges = ", ".join(f"{r} {c}" for r, c in result["merges"].items())
+    await bot.send(chat_id, f"🔀 Mergeado en {config.DEV_BRANCH}: {merges}. Jenkins lo está construyendo.")
+    _start_job(ChatIn(chat_id=chat_id, from_name=from_name, text=(
+        f"(Mensaje del sistema) {by} aprobó el merge de {task} en «{project}» y el sistema lo mergeó en "
+        f"{config.DEV_BRANCH} ({merges}). Jenkins construye develop y despliega desarrollo; si falla, el "
+        "sistema te avisa con el log. Contale al usuario en una línea y terminá el turno."
+    )))
 
 
 async def _on_telegram_message(chat_id: str, text: str | None, from_name: str | None) -> None:
@@ -1050,6 +1074,28 @@ async def _send_images(chat_id: str | None, images: list[str]) -> None:
         log.error("no pude mandar las imágenes generadas: %s", exc)
 
 
+def _merge_evidence(project: str, state: dict, task: str) -> tuple[str, bool]:
+    """Lo que el usuario necesita para aprobar un merge sin hacerlo a ciegas: el PR de cada
+    repo, cuánto cambia y los veredictos (pedido del usuario del 5/10/2026). Devuelve el
+    texto y si hay algún PR para mirar: sin PR, el pedido no se manda."""
+    lines = ["🔍 Para revisar antes de aprobar:"]
+    with_pr = False
+    for repo in state.get("repos", {}):
+        try:
+            stat = code.diff_stat(project, repo, task)
+            if not stat:
+                continue
+            pr = code.find_pr(project, repo, task)
+            with_pr = with_pr or bool(pr)
+            lines.append(f"- {repo}: {pr or 'sin PR abierto'} ({stat})")
+        except (code.CodeError, subprocess.SubprocessError) as exc:
+            lines.append(f"- {repo}: no pude leer el PR ({str(exc)[:80]})")
+    verdicts = code.reviews(vault.project_path(project) / "Desarrollo" / f"{task}.md")
+    lines.append(f"Líder técnico: {verdicts['tecnica']} · QA: {verdicts['qa']}")
+    lines.append("Si aprobás, el sistema mergea en develop y Jenkins lo construye y lo despliega en desarrollo.")
+    return "\n".join(lines), with_pr
+
+
 @app.post("/aprobaciones", dependencies=[Depends(auth)])
 async def request_approval(body: ApprovalIn, x_orc_job: str = Header(default="")) -> dict:
     """Le manda al usuario un pedido de aprobación con botones. Lo usa `orc-aprobacion`."""
@@ -1075,6 +1121,15 @@ async def request_approval(body: ApprovalIn, x_orc_job: str = Header(default="")
             raise HTTPException(409, "Diseño/DESIGN.md todavía no tiene la sección «Paleta» con su bloque JSON: delegá en ui.")
         swatch = await asyncio.to_thread(palette.swatch, colors, f"Paleta · {body.project}")
         summary = f"{summary}\n\n{palette.summary(colors)}"
+    if gate.startswith("merge:"):
+        evidence, with_pr = await asyncio.to_thread(_merge_evidence, body.project, state, gate[6:])
+        if not with_pr and config.GITHUB_CHECKS:
+            # Pedir un merge sin nada que mirar es aprobar a ciegas: no se manda.
+            raise HTTPException(409, (
+                f"{gate[6:]} no tiene ningún PR abierto en GitHub (puede que la rama no se haya "
+                "podido subir): no le pidas al usuario aprobar sin PRs. Revisá qué pasó con la "
+                "publicación de la rama."))
+        summary = f"{summary}\n\n{evidence}"
     approval_id, replaced = process.request(state, gate, summary, chat_id)
     for old in replaced:
         if old.get("message_id"):
@@ -1208,74 +1263,75 @@ async def register_repos(body: ReposIn) -> dict:
             "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
 
 
-@app.post("/merge", dependencies=[Depends(auth)])
-async def merge(body: MergeIn, x_orc_job: str = Header(default="")) -> dict:
-    """Mergea una tarea en develop, solo si el Líder técnico y QA la aprobaron en
-    Desarrollo/<tarea>.md (decisión del usuario: merges automáticos con esas dos)."""
-    try:
-        task = code.valid_task(body.tarea)
-    except code.CodeError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    state = await asyncio.to_thread(process.load, body.project)
+class MergeError(Exception):
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status, self.detail = status, detail
+
+
+async def _merge_task(project: str, task: str, chat_id: str | None) -> dict:
+    """Mergea una tarea en develop (con QA y el Líder técnico aprobados), avisa a Jenkins y
+    sigue el build de develop. Lo usan /merge y el botón de aprobación del merge."""
+    state = await asyncio.to_thread(process.load, project)
     if not state or not state.get("repos"):
-        raise HTTPException(409, f"«{body.project}» no tiene repos registrados.")
-    task_file = vault.project_path(body.project) / "Desarrollo" / f"{task}.md"
+        raise MergeError(409, f"«{project}» no tiene repos registrados.")
+    task_file = vault.project_path(project) / "Desarrollo" / f"{task}.md"
     verdicts = code.reviews(task_file)
     missing = [code.REVIEWS[k] for k, v in verdicts.items() if not code.approved(v)]
     if missing:
         detail = "; ".join(f"{code.REVIEWS[k]}: {v or 'todavía no revisó'}" for k, v in verdicts.items())
-        raise HTTPException(409, f"No se mergea {task}: falta la aprobación de {', '.join(missing)} ({detail}).")
+        raise MergeError(409, f"No se mergea {task}: falta la aprobación de {', '.join(missing)} ({detail}).")
     # El build de develop que había antes del merge: después se espera uno nuevo.
     previous = {}
     if jenkins.configured():
         for repo in state["repos"]:
             try:
-                previous[repo] = await asyncio.to_thread(jenkins.last_number, body.project, repo, config.DEV_BRANCH)
+                previous[repo] = await asyncio.to_thread(jenkins.last_number, project, repo, config.DEV_BRANCH)
             except httpx.HTTPError:
                 previous[repo] = None
     merged = {}
-    with runner.project_lock(body.project):
+    with runner.project_lock(project):
         for repo in state["repos"]:
             try:
-                commit = await asyncio.to_thread(code.merge_task, body.project, repo, task)
+                commit = await asyncio.to_thread(code.merge_task, project, repo, task)
             except (code.CodeError, subprocess.SubprocessError) as exc:
-                raise HTTPException(409, str(exc)) from exc
+                raise MergeError(409, str(exc)) from exc
             if commit:
                 merged[repo] = commit
         if not merged:
-            raise HTTPException(409, f"{task} no tiene cambios para mergear en ningún repo.")
+            raise MergeError(409, f"{task} no tiene cambios para mergear en ningún repo.")
         note = (f"\n\n## Merge\n\n{datetime.now().astimezone():%d/%m/%Y %H:%M} · en {config.DEV_BRANCH}: "
                 + ", ".join(f"{r} {c}" for r, c in merged.items()) + "\n")
         await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + note, encoding="utf-8"))
-        await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"merge de {task} en {body.project}")
+        await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"merge de {task} en {project}")
     for repo in merged:
-        await asyncio.to_thread(runner._notify_jenkins, body.project, repo)
+        await asyncio.to_thread(runner._notify_jenkins, project, repo)
         if previous.get(repo) is not None:
-            _track_background(_watch_develop(_chat_for(x_orc_job), body.project, task, repo, previous[repo]))
+            _track_background(_watch_develop(chat_id, project, task, repo, previous[repo]))
     return {"status": "mergeada", "tarea": task, "merges": merged,
             "siguiente": "Jenkins construye develop: si falla, el sistema te avisa con el log."}
 
 
-async def _maybe_finish_skeleton(chat_id: str | None, project: str) -> None:
-    """Fase 4 sin puerta: con el esqueleto en develop y Jenkins en verde en todos los
-    repos que tienen job, el proyecto pasa a la fase 5 y se despierta al Director."""
-    state = await asyncio.to_thread(process.load, project)
-    if not state or state.get("fase") != 4:
-        return
-    for repo in state.get("repos", {}):
-        status = await asyncio.to_thread(jenkins.branch_status, project, repo, config.DEV_BRANCH)
-        build = status.get("build")
-        if status["job"] and (not build or build.get("building") or build.get("result") != "SUCCESS"):
-            return  # otro repo todavía no terminó (su propio seguimiento vuelve a llamar acá)
-    new_phase = process.advance_after_skeleton(state)
-    await asyncio.to_thread(process.save, project, state, f"esqueleto en develop con Jenkins en verde: fase {new_phase}")
-    if chat_id:
-        current = process.phase(new_phase)
-        _start_job(ChatIn(chat_id=chat_id, text=(
-            f"(Mensaje del sistema) El esqueleto de «{project}» quedó en develop y Jenkins está en verde: "
-            f"el proyecto pasó a la fase {current.label}. Contale al usuario en pocas líneas, con el puerto "
-            f"de desarrollo ({state.get('puertos', {}).get('desarrollo')}). Qué hacer ahora: {current.guide}"
-        )))
+@app.post("/merge", dependencies=[Depends(auth)])
+async def merge(body: MergeIn, x_orc_job: str = Header(default="")) -> dict:
+    """Mergea una tarea en develop, solo si el Líder técnico y QA la aprobaron en
+    Desarrollo/<tarea>.md. Las de MERGE_NEEDS_APPROVAL (el esqueleto) necesitan además
+    la aprobación del usuario: esas las mergea el sistema cuando toca «Aprobar»."""
+    try:
+        task = code.valid_task(body.tarea)
+    except code.CodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if task in config.MERGE_NEEDS_APPROVAL:
+        state = await asyncio.to_thread(process.load, body.project)
+        if not (state or {}).get("aprobaciones", {}).get(f"merge:{task}"):
+            raise HTTPException(409, (
+                f"El merge de {task} necesita la aprobación del usuario. Pedila con: orc-aprobacion "
+                f"\"{body.project}\" merge:{task} \"<resumen>\". El sistema le agrega los links de los PRs y, "
+                "si aprueba, mergea solo: no uses orc-merge."))
+    try:
+        return await _merge_task(body.project, task, _chat_for(x_orc_job))
+    except MergeError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
 
 
 _background: set[asyncio.Task] = set()

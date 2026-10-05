@@ -19,6 +19,11 @@ PUERTAS
   diseño     Fase 5: UX, UI, modelo de datos y contrato de la API.
   plan       Fase 6: plan de trabajo y plan de pruebas.
   ADR-NNN    Un ADR puntual, por ejemplo ADR-003.
+  merge:esqueleto, merge:T-NNN
+             El merge de una tarea en develop, con el Líder técnico y QA ya aprobados.
+             El sistema le agrega al pedido los links de los PRs, lo que cambia y los
+             veredictos; si el usuario aprueba, mergea solo (no uses orc-merge). El
+             esqueleto siempre va por acá.
 
   "<resumen>"  Lo que el usuario necesita para decidir, en 3 a 8 líneas de texto plano:
                qué se propone, por qué, y qué documentos mirar.

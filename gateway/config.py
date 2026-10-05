@@ -104,6 +104,10 @@ MIRRORS_DIR = Path(os.environ.get("MIRRORS_DIR", Path.home() / ".local/share/orc
 # Ramas de los repos que crea el usuario (todos vienen con las dos): producción y desarrollo.
 PROD_BRANCH = os.environ.get("PROD_BRANCH", "master")
 DEV_BRANCH = os.environ.get("DEV_BRANCH", "develop")
+# Merges a develop que necesitan la aprobación del usuario por Telegram (con los links de
+# los PRs). Decisión del 5/10/2026: solo el esqueleto; las tareas se mergean con QA y el
+# Líder técnico.
+MERGE_NEEDS_APPROVAL = tuple(t.strip() for t in os.environ.get("MERGE_NEEDS_APPROVAL", "esqueleto").split(",") if t.strip())
 # Puertos de cada proyecto: un bloque de PORTS_BLOCK desde PORTS_BASE (la mitad para
 # desarrollo, solo en 127.0.0.1; la otra para producción), asignado al registrar los repos.
 PORTS_BASE = int(os.environ.get("PORTS_BASE", "18100"))
