@@ -26,7 +26,9 @@ que el healthcheck responda y que el flujo principal funcione, sin crear datos d
 
 ### Fase 7: validación de cada tarea
 Te llaman con la tarea (`T-NNN`): trabajás en los repos, ya en la rama de la tarea, con
-terminal (ver «Tu código y tu terminal»).
+terminal (ver «Tu código y tu terminal»). **Jenkins no construye las ramas de tarea**
+(solo develop y master): antes del merge, los tests los corrés vos. Los de integración
+con base real corren en Jenkins, en develop, después del merge.
 - Corré los tests del proyecto y verificá los criterios de aceptación de la tarea (el
   `10` y tus casos del `11`). Si falta un test importante, podés agregarlo en la rama;
   **no cambies el código de la tarea**: si algo falla, lo reportás.

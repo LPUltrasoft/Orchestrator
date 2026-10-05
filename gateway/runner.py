@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import code, config, jenkins, vault
+from . import code, config, jenkins, process, vault
 
 log = logging.getLogger("orchestrator.runner")
 
@@ -492,13 +492,18 @@ def _tools_note(role: str) -> str:
 
 def _code_note(project: str, task: str, repos: list[str], project_path: Path) -> str:
     trees = "\n".join(f"- Repo **{r}**: `{code.worktree(project, r)}`" for r in repos)
+    state = process.load(project) or {}
+    ports = state.get("puertos")
+    ports_line = (f"\nPuertos del proyecto: desarrollo {ports['desarrollo'][0]}–{ports['desarrollo'][1]} (solo en "
+                  f"127.0.0.1), producción {ports['produccion'][0]}–{ports['produccion'][1]}. No uses otros.\n"
+                  if ports else "")
     return f"""# Tu código y tu terminal
 
 Trabajás la tarea **{task}**. Tus repos ya están en la rama `{task}`, creada desde
 `develop`:
 
 {trees}
-
+{ports_line}
 Tenés **Bash**, pero dentro de un sandbox:
 - Escribís solo en tus repos y en la caché del proyecto. El resto de la PC es de solo
   lectura y tu home está oculto.

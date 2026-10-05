@@ -1151,6 +1151,7 @@ async def register_repos(body: ReposIn) -> dict:
                 await asyncio.to_thread(process.save, body.project, state, "repos registrados (en parte)")
             raise HTTPException(409, f"No pude registrar el repo {repo}: {exc}") from exc
     state["repos"] = registered
+    ports = await asyncio.to_thread(process.allocate_ports, state)
     await asyncio.to_thread(process.save, body.project, state, "repos registrados")
     jobs = []
     if jenkins.configured():
@@ -1159,7 +1160,7 @@ async def register_repos(body: ReposIn) -> dict:
         except (jenkins.JenkinsError, httpx.HTTPError) as exc:
             log.warning("no pude crear los jobs de Jenkins de %s: %s", body.project, exc)
             jobs = [f"error: {exc}"]
-    return {"status": "registrados", "repos": registered, "jenkins": jobs,
+    return {"status": "registrados", "repos": registered, "jenkins": jobs, "puertos": ports,
             "siguiente": "Los roles que programan ya pueden trabajar con orc-delegate --tarea."}
 
 
@@ -1211,6 +1212,28 @@ async def merge(body: MergeIn, x_orc_job: str = Header(default="")) -> dict:
             "siguiente": "Jenkins construye develop: si falla, el sistema te avisa con el log."}
 
 
+async def _maybe_finish_skeleton(chat_id: str | None, project: str) -> None:
+    """Fase 4 sin puerta: con el esqueleto en develop y Jenkins en verde en todos los
+    repos que tienen job, el proyecto pasa a la fase 5 y se despierta al Director."""
+    state = await asyncio.to_thread(process.load, project)
+    if not state or state.get("fase") != 4:
+        return
+    for repo in state.get("repos", {}):
+        status = await asyncio.to_thread(jenkins.branch_status, project, repo, config.DEV_BRANCH)
+        build = status.get("build")
+        if status["job"] and (not build or build.get("building") or build.get("result") != "SUCCESS"):
+            return  # otro repo todavía no terminó (su propio seguimiento vuelve a llamar acá)
+    new_phase = process.advance_after_skeleton(state)
+    await asyncio.to_thread(process.save, project, state, f"esqueleto en develop con Jenkins en verde: fase {new_phase}")
+    if chat_id:
+        current = process.phase(new_phase)
+        _start_job(ChatIn(chat_id=chat_id, text=(
+            f"(Mensaje del sistema) El esqueleto de «{project}» quedó en develop y Jenkins está en verde: "
+            f"el proyecto pasó a la fase {current.label}. Contale al usuario en pocas líneas, con el puerto "
+            f"de desarrollo ({state.get('puertos', {}).get('desarrollo')}). Qué hacer ahora: {current.guide}"
+        )))
+
+
 _background: set[asyncio.Task] = set()
 
 
@@ -1238,6 +1261,8 @@ async def _watch_develop(chat_id: str | None, project: str, task: str, repo: str
         await asyncio.to_thread(lambda: task_file.write_text(task_file.read_text(encoding="utf-8") + line, encoding="utf-8"))
         await asyncio.to_thread(vault.commit_paths, [vault.relative(task_file)], f"Jenkins: {task} en {config.DEV_BRANCH} de {repo}")
     if result == "SUCCESS":
+        if task == "esqueleto":
+            await _maybe_finish_skeleton(chat_id, project)
         return
     tail = await asyncio.to_thread(jenkins.console_tail, project, repo, config.DEV_BRANCH, 25)
     await _alert(f"❌ Jenkins falló en {config.DEV_BRANCH} de «{project}» ({repo}) después de mergear {task}.\n\n{tail[-1500:]}")

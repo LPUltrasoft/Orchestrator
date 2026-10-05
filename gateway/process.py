@@ -61,7 +61,15 @@ PHASES = (
           "infraestructura de los dos ambientes por separado; en lider_tecnico la revisión "
           "técnica de esas estimaciones; y en legal la propuesta y el contrato (09). Pedí la "
           "aprobación «contrato»."),
-    Phase(4, "Repos y esqueleto", "📦", ("devops",), None, False, _NOT_YET),
+    Phase(4, "Repos y esqueleto", "📦", ("devops", "lider_tecnico", "qa"), None, True,
+          "Delegá en devops el plan de infraestructura (06), con los nombres de los dos repos. "
+          "Pedile al usuario los repos con orc-repos <proyecto> pedir <nombre-front> <nombre-back> "
+          "y terminá el turno; cuando mande los links, registralos con orc-repos <proyecto> "
+          "registrar <link-front> <link-back>. Después delegá en devops el esqueleto con "
+          "--tarea esqueleto (proyecto base, Docker, compose, Jenkinsfile, healthcheck); que lo "
+          "revise lider_tecnico (Desarrollo/esqueleto - <repo>.diff), lo valide qa con --tarea "
+          "esqueleto, y mergealo con orc-merge <proyecto> esqueleto. Cuando Jenkins termine "
+          "develop en verde, el sistema pasa el proyecto a la fase 5 solo y te avisa."),
     Phase(5, "Diseño y datos", "🎨", ("ux", "ui", "revisor_ux_ui", "imagenes", "dba", "lider_tecnico",
                                      "devops", "seguridad"), "diseño", True,
           "Delegá en ux los flujos y wireframes y después en ui el sistema de diseño (05, "
@@ -75,13 +83,22 @@ PHASES = (
           "recibe por Telegram. Además: "
           "dba, el modelo y el catálogo de funciones (03); "
           "lider_tecnico, el contrato de la API en OpenAPI (04) y la tabla de qué cambia "
-          "entre desarrollo y producción (02); y devops, el plan de repos, Docker, los dos "
-          "ambientes, Jenkins y backups (06). Opcional: seguridad revisa el diseño (12). "
+          "entre desarrollo y producción (02); y, si el diseño cambia algo de la "
+          "infraestructura, devops actualiza el 06. Opcional: seguridad revisa el diseño (12). "
           "Pedí la aprobación «diseño» cuando la revisión diga «Lista para aprobar»."),
     Phase(6, "Planificación", "📌", ("team_leader", "qa"), "plan", True,
           "Delegá en team_leader el plan de trabajo (10) y en qa el plan de pruebas por tarea "
           "(11). Pedí la aprobación «plan»."),
-    Phase(7, "Desarrollo", "⚙️", ("backend", "frontend"), None, False, _NOT_YET),
+    Phase(7, "Desarrollo", "⚙️", ("backend", "frontend", "devops", "lider_tecnico", "qa"), None, True,
+          "Por cada tarea del 10 (en orden y respetando dependencias): 1) delegá en backend o "
+          "frontend con --tarea T-NNN, con la tarea, sus criterios de aceptación y sus casos del "
+          "11 en la instrucción; 2) que lider_tecnico revise el código (Desarrollo/T-NNN - "
+          "<repo>.diff) y 3) qa la valide con --tarea T-NNN; 4) si los dos aprueban, orc-merge "
+          "<proyecto> T-NNN; si alguno pide cambios, volvé al desarrollador con lo que pidieron. "
+          "Después del merge Jenkins construye develop y despliega desarrollo: si falla, el "
+          "sistema te avisa con el log. Contale al usuario el avance de a varias tareas, no de "
+          "a una. Cuando estén todas, avisale que desarrollo está listo para probar; el "
+          "release (fase 8) llega en la próxima etapa del sistema."),
     Phase(8, "Release", "🚦", ("qa", "seguridad", "legal"), "release", False, _NOT_YET),
     Phase(9, "Operación", "📈", ("devops",), None, False, _NOT_YET),
 )
@@ -263,6 +280,35 @@ def validate_gate(project: str, state: dict | None, gate: str) -> str | None:
         if problem:
             return f"Antes de «diseño», {problem}."
     return None
+
+
+def advance_after_skeleton(state: dict) -> int | None:
+    """La fase 4 no tiene puerta: termina sola cuando el esqueleto está en develop y
+    Jenkins en verde. Devuelve la fase nueva, o None si el proyecto no estaba en la 4."""
+    if state.get("fase") != 4:
+        return None
+    state["fase"] = _next_phase(4)
+    return state["fase"]
+
+
+def allocate_ports(state: dict) -> dict:
+    """Un bloque de puertos para el proyecto: libre en la PC y sin usar por otro proyecto."""
+    if state.get("puertos"):
+        return state["puertos"]
+    import subprocess
+    taken = {s.get("puertos", {}).get("base") for _, s in projects_with_state() if s.get("puertos")}
+    listening = set()
+    try:
+        out = subprocess.run(["ss", "-ltnH"], capture_output=True, text=True, timeout=10).stdout
+        listening = {int(line.split()[3].rsplit(":", 1)[1]) for line in out.splitlines() if line.split()}
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        pass
+    base, size = config.PORTS_BASE, config.PORTS_BLOCK
+    while base in taken or any(p in listening for p in range(base, base + size)):
+        base += size
+    half = size // 2
+    state["puertos"] = {"base": base, "desarrollo": [base, base + half - 1], "produccion": [base + half, base + size - 1]}
+    return state["puertos"]
 
 
 def palette_problem(project: str, state: dict | None) -> str | None:

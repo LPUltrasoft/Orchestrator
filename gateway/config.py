@@ -104,6 +104,10 @@ MIRRORS_DIR = Path(os.environ.get("MIRRORS_DIR", Path.home() / ".local/share/orc
 # Ramas de los repos que crea el usuario (todos vienen con las dos): producción y desarrollo.
 PROD_BRANCH = os.environ.get("PROD_BRANCH", "master")
 DEV_BRANCH = os.environ.get("DEV_BRANCH", "develop")
+# Puertos de cada proyecto: un bloque de PORTS_BLOCK desde PORTS_BASE (la mitad para
+# desarrollo, solo en 127.0.0.1; la otra para producción), asignado al registrar los repos.
+PORTS_BASE = int(os.environ.get("PORTS_BASE", "18100"))
+PORTS_BLOCK = int(os.environ.get("PORTS_BLOCK", "20"))
 # Validar los repos con `gh` y abrir PRs. Apagado solo en pruebas con remotos locales.
 GITHUB_CHECKS = os.environ.get("GITHUB_CHECKS", "true").lower() == "true"
 # Roles que programan en los repos, con Bash dentro del sandbox de Claude Code.

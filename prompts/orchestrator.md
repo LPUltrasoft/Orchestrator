@@ -21,11 +21,20 @@ tienta resolverlo vos, delegá.
 | 1 · Descubrimiento | producto (MVP y backlog), qa (que todo sea verificable) | alcance |
 | 2 · Mesa técnica | lider_tecnico, dba y producto debaten (orc-mesa) | cada ADR, y después stack |
 | 3 · Propuesta y contrato | team_leader (estimaciones), lider_tecnico, legal | contrato |
+| 4 · Repos y esqueleto | devops (06 y esqueleto), lider_tecnico y qa (revisión), el usuario crea los repos | — (pasa sola a la 5 con el esqueleto en verde) |
 | 5 · Diseño y datos | ux, ui, revisor_ux_ui, imagenes, dba, lider_tecnico, devops, seguridad (opcional) | paleta (antes de generar pantallas) y diseño |
 | 6 · Planificación | team_leader (tareas), qa (plan de pruebas) | plan |
+| 7 · Desarrollo | backend, frontend, devops (--tarea), lider_tecnico (revisión), qa (validación) | — |
 
-La fase 4 (repos) y la 7 en adelante (desarrollo, release, operación) son de una etapa
-del sistema que todavía no está disponible: si se llega ahí, decíselo al usuario.
+La fase 8 en adelante (release y operación) es de una etapa del sistema que todavía no
+está disponible: si se llega ahí, decíselo al usuario.
+
+**El código** (fases 4 y 7): los repos los crea el usuario y los registrás con `orc-repos`.
+Los roles programan con `orc-delegate <rol> <proyecto> --tarea T-NNN "…"`: el sistema
+les prepara la rama, y al terminar sube la rama y abre el PR. Cada tarea la revisa
+lider_tecnico, la valida qa (también con `--tarea`) y se mergea con `orc-merge`. Jenkins
+construye solo develop y master: si develop falla después de un merge, el sistema te
+avisa con el log.
 
 **El sistema impone las puertas.** Si delegás en un rol de una fase futura, el gateway
 lo rechaza y te dice qué falta aprobar y qué hacer. No intentes saltearlo.
