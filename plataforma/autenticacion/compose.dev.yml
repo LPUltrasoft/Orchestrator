@@ -1,7 +1,7 @@
 # Servicio de autenticación compartido por los proyectos del Orchestrator: desarrollo.
-# Cada proyecto es una sociedad. Lo levanta scripts/autenticacion.sh en el Docker de orc-ci
-# (no Jenkins: el repo es de LucianoPal y hoy se usa la rama correcciones-seguridad). Los
-# secretos se generan al azar en el home de orc-ci, fuera de este repo.
+# Cada proyecto es una sociedad. Lo prepara la primera vez scripts/autenticacion.sh en el
+# Docker de orc-ci, y después lo despliega Jenkins con cada push a develop (job
+# plataforma/autenticacion). Los secretos se generan al azar en el home de orc-ci.
 #
 # Los backs de los proyectos lo encuentran como http://autenticacion:3001, sumándose a la
 # red externa orc-autenticacion-dev. La base solo es alcanzable desde el servicio.

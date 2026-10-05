@@ -104,9 +104,11 @@ def _create(client: httpx.Client, parent: str, name: str, xml: str) -> None:
         raise JenkinsError(f"no pude crear «{name}» en Jenkins: HTTP {response.status_code} {response.text[:300]}")
 
 
-def ensure_jobs(project: str, repos: dict[str, dict]) -> list[str]:
+def ensure_jobs(project: str, repos: dict[str, dict], credentials: str | None = None) -> list[str]:
     """La carpeta del proyecto y un job multibranch por repo. Los que ya existen se
-    actualizan (por ejemplo, el filtro de ramas). Devuelve los creados o actualizados."""
+    actualizan (por ejemplo, el filtro de ramas). Devuelve los creados o actualizados.
+    `credentials`: otra credencial para bajar el código (por ejemplo, la de un repo que no
+    es de la organización), en vez de JENKINS_CREDENTIALS_ID."""
     done = []
     slug = code.slug(project)
     with _client() as client:
@@ -117,7 +119,7 @@ def ensure_jobs(project: str, repos: dict[str, dict]) -> list[str]:
             xml = _MULTIBRANCH.format(
                 description=escape(f"{repo} de «{project}»: GitHub {info['github']}"),
                 slug=slug, repo=repo, remote=escape(f"https://github.com/{info['github']}.git"),
-                credentials=escape(config.JENKINS_CREDENTIALS_ID),
+                credentials=escape(credentials or config.JENKINS_CREDENTIALS_ID),
                 branches=escape(f"{config.DEV_BRANCH} {config.PROD_BRANCH}"),
             )
             if _exists(client, _job_path(project, repo)):

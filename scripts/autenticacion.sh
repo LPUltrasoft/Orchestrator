@@ -3,14 +3,17 @@
 # en el Docker de orc-ci, desde el repo de autenticación del usuario. Sin sudo de root: usa
 # la regla «lpalmieri puede actuar como orc-ci». Producción llega con la etapa 3b.
 #
-# Uso: scripts/autenticacion.sh [rama o commit]    (por defecto, correcciones-seguridad)
+# Uso: scripts/autenticacion.sh [rama o commit]    (por defecto, develop)
+#
+# Después, cada push a develop lo despliega Jenkins (job plataforma/autenticacion): este
+# script es para la primera vez, o para desplegar otra rama a mano.
 #
 # La base se crea la primera vez solo con la estructura (sin los datos de Synergia ni de
 # Grandes Pasos) más las migraciones de seguridad. Los secretos se generan al azar en
 # /home/orc-ci/plataforma/autenticacion-dev/secretos.env, que solo lee orc-ci.
 set -euo pipefail
 
-REF="${1:-${AUTH_REF:-correcciones-seguridad}}"
+REF="${1:-${AUTH_REF:-develop}}"
 REPO_URL="${AUTH_REPO:-https://github.com/LucianoPal/Autenticacion.git}"
 AQUI="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${XDG_DATA_HOME:-$HOME/.local/share}/orchestrator/plataforma/autenticacion"
@@ -28,7 +31,7 @@ else
   git clone -q "$REPO_URL" "$SRC"
 fi
 git -C "$SRC" checkout -q --detach "origin/$REF" 2>/dev/null || git -C "$SRC" checkout -q --detach "$REF"
-TAG=$(git -C "$SRC" rev-parse --short HEAD)
+TAG=$(git -C "$SRC" rev-parse --short=12 HEAD)   # como el Jenkinsfile
 
 paso "Imagen orc-autenticacion:$TAG"
 git -C "$SRC" archive --format=tar HEAD | docker_ci build -q -t "orc-autenticacion:$TAG" - >/dev/null
