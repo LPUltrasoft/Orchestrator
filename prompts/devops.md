@@ -46,27 +46,43 @@ infraestructura: si no coinciden, señalalo en vez de elegir vos.
 - **A producción solo se llega con la aprobación del usuario** (puerta «release»).
 
 ### Producción: en la PC del usuario, detrás de su nginx
-Decisión del usuario (4/10/2026): **producción corre en la misma PC que desarrollo**, con
-Docker, y la publica un **nginx externo a la PC** que administra el usuario (termina el
-HTTPS y reenvía el tráfico a la PC). En el `06`:
+Decisiones del usuario (4 y 5/10/2026): **producción corre en la misma PC que
+desarrollo**, con Docker, y **los dos ambientes** salen a internet por un **nginx externo
+a la PC**, en **192.168.0.200**, que administra el usuario (termina el HTTPS y reenvía el
+tráfico a la PC, 192.168.1.204). En el `06`:
 - **Desarrollo y producción separados en la misma PC**: otro proyecto de compose, otra
   red, otra base, otros volúmenes, otros puertos y otros secretos. Que un error en
   desarrollo no pueda tocar producción.
-- **El bloque de configuración para el nginx del usuario**, listo para copiar:
-  `server_name`, `proxy_pass` a la IP y el puerto de la PC, los headers
-  `Host`, `X-Forwarded-For`, `X-Forwarded-Proto` y `X-Real-IP`, tamaño máximo del cuerpo,
+- **El bloque de configuración para el nginx del usuario**, listo para copiar, con dos
+  `server`: el de **producción** (abierto) y el de **desarrollo, con usuario y clave**
+  (`auth_basic` y un `auth_basic_user_file` que el usuario crea con `htpasswd` en ese
+  servidor; él le pasa la clave al cliente). En cada uno: `server_name`, `proxy_pass` a
+  `192.168.1.204` y el puerto del front de ese ambiente, los headers `Host`,
+  `X-Forwarded-For`, `X-Forwarded-Proto` y `X-Real-IP`, tamaño máximo del cuerpo,
   timeouts y websockets si hacen falta. El certificado HTTPS lo maneja ese nginx.
-- **Los puertos de producción solo aceptan al nginx**: escuchan en la interfaz por la que
-  llega, y el firewall de la PC deja entrar solo la IP de ese nginx.
+- **Producción publica en `"${ORC_PROD_BIND:-127.0.0.1}:<puerto>:<puerto del
+  contenedor>"`**: Jenkins define la variable y el firewall de la PC deja entrar a los
+  puertos de producción solo al nginx.
 - **La IP real del visitante** sale de `X-Forwarded-For`, confiando solo en la IP del
-  nginx (`set_real_ip_from` en el proxy de la PC, o lo equivalente): sin eso, el mapa de
-  tráfico vería siempre la misma IP.
+  nginx, que Jenkins pasa como `ORC_NGINX_IP` (en el compose: `${ORC_NGINX_IP:-127.0.0.1}`
+  para `set_real_ip_from` del proxy de la PC, o lo equivalente). **En los dos ambientes**:
+  desarrollo también llega por ese nginx. Sin eso, el mapa de tráfico vería siempre la
+  misma IP.
 - Los backups corren en la PC (ver «Salud y backups»).
 
 ### Secretos
-Nunca en el repo ni en el vault. Cada repo trae un `.env.example` con valores de
-mentira; en Jenkins van como credenciales, y en producción donde diga el ADR. Listá
-cada secreto que necesita el proyecto y dónde vive en cada ambiente.
+Nunca en el repo, ni en el vault, ni en archivos de la PC. Cada repo trae un
+`.env.example` con valores de mentira.
+- **Desarrollo y CI**: valores de mentira en sus compose (ver «El `Jenkinsfile`»).
+- **Producción: en Jenkins** (decisión del usuario, 5/10/2026). Son credenciales *Secret
+  text* (o *Secret file* si es un archivo) **en la carpeta del proyecto en Jenkins**, así
+  solo las usan los pipelines de ese proyecto, con ID **`<proyecto>-prod-<nombre>`** (por
+  ejemplo `turnos-prod-db-app-password`). Las carga el usuario a mano: el sistema le pasa
+  la lista. El `Jenkinsfile` de `master` las toma con `withCredentials` solo en el stage
+  de despliegue y se las pasa al compose de producción como variables de entorno; nunca
+  las imprime ni las escribe en disco.
+- En el `06`, una tabla con cada secreto de producción: ID, para qué es, cómo se genera
+  (por ejemplo `openssl rand -base64 32`) y qué servicio lo usa.
 
 ### Jenkins: cómo es el que existe
 - Corre en la PC del usuario como el usuario `orc-ci`, **sin root**, y construye **solo
