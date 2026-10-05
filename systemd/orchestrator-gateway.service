@@ -2,6 +2,11 @@
 Description=Orchestrator Gateway (puente n8n <-> agentes agy)
 After=network-online.target
 Wants=network-online.target
+# Si se cae 5 veces en 5 minutos, systemd deja de reintentar y avisa por Telegram
+# (el gateway caído no puede avisar solo).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+OnFailure=orchestrator-alerta.service
 
 [Service]
 Type=simple
@@ -12,6 +17,11 @@ ExecStart=%h/.local/bin/uv run --project gateway python -m gateway.main
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=5
+# Reintenta sin pasar por "failed": el aviso es solo para cuando se agotan los reintentos.
+RestartMode=direct
+# uvicorn sale con 143 (SIGTERM) en un apagado normal: no es una falla. Sin esto, cada
+# reinicio quedaba como "Failed" y dispararía el aviso.
+SuccessExitStatus=143
 # Un restart no debe matar a los agentes en vuelo: SIGTERM solo a uvicorn, que
 # espera a que terminen los requests y las tareas en background. Los procesos agy
 # reciben SIGKILL recién si eso tarda más de TimeoutStopSec.

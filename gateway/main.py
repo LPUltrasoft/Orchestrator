@@ -12,14 +12,14 @@ import subprocess
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePath
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, design, drive, jobs, palette, process, progress, quota, runner, sessions, stitch, telegram, vault
+from . import config, design, drive, jobs, palette, process, progress, quota, runner, selftest, sessions, stitch, telegram, vault
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -60,6 +60,9 @@ _progress: dict[str, progress.Progress] = {}
 # Pedidos pausados por cuota, persistidos: sobreviven a un reinicio mientras esperan.
 _PAUSED_FILE = config.STATE_DIR / "paused.json"
 _resumers: set[asyncio.Task] = set()
+# Existe mientras el gateway corre: si al arrancar ya estaba, el apagado anterior no fue
+# limpio (corte de luz, cuelgue, SIGKILL).
+_RUNNING_MARK = config.STATE_DIR / "en_marcha"
 # Espacio del Drive de los backups (se ve en /health y en /estado).
 _drive = {"uso": None, "revisado": None, "avisado": None, "error": None}
 # Estado del push automático del vault a GitHub (se ve en /health y en /estado).
@@ -202,6 +205,65 @@ async def _push_vault() -> None:
     if _push["alerted"]:
         await _alert("✅ Ya pude subir el vault a GitHub: no queda nada pendiente.")
     _push.update(pending=0, last_push=now, failing_since=None, error=None, alerted=False)
+
+
+def _selftest_notes(previous: dict | None, result: dict) -> list[str]:
+    """Qué contarle al usuario de una autoprueba: fallas, recuperación y actualizaciones."""
+    notes = []
+    failures = [f"- {name}: {result[key]}" for key, name in (("agy", "agy"), ("claude", "Claude")) if result[key]]
+    if failures:
+        notes.append("🔧 Autoprueba de los motores: algo no anda.\n" + "\n".join(failures))
+    elif previous and not previous.get("ok"):
+        notes.append("✅ Autoprueba: agy y Claude volvieron a andar.")
+    if previous:
+        for key, name in (("agy", "agy"), ("claude", "Claude Code")):
+            before, now = previous.get("versiones", {}).get(key), result["versiones"].get(key)
+            if before and now and before != now:
+                state = "falló (mirá arriba)" if result[key] else "pasó" + (": sigue aislado" if key == "claude" else "")
+                notes.append(f"ℹ️ Se actualizó {name}: {before} → {now}. La autoprueba {state}.")
+    return notes
+
+
+async def _startup_checks(unclean: bool) -> None:
+    """Al arrancar: avisa si el apagado anterior no fue limpio, si hay problemas de
+    configuración, y corre la autoprueba si hace falta (para no gastar cuota en cada
+    reinicio: solo si la última buena tiene más de una hora o cambió una versión)."""
+    await asyncio.sleep(15)
+    notes = []
+    if unclean:
+        notes.append("⚠️ El gateway no se había apagado bien (¿corte de luz o cuelgue?). Ya volvió a "
+                     "andar; si estabas esperando una respuesta, volvé a pedírmela.")
+    problems = config.validate()
+    if problems:
+        notes.append("⚠️ Problemas de configuración:\n" + "\n".join(f"- {p}" for p in problems))
+    previous = selftest.last()
+    current = await selftest.versions()
+    fresh = previous and previous.get("ok") and previous.get("versiones") == current and (
+        datetime.now(timezone.utc) - datetime.fromisoformat(previous["fecha"])).total_seconds() < 3600
+    if not fresh:
+        notes += _selftest_notes(previous, await selftest.run())
+    if notes:
+        await _alert("\n\n".join(notes))
+
+
+def _seconds_until(hour: int) -> float:
+    now = datetime.now().astimezone()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target = target.replace(day=now.day) + timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def _daily_selftest() -> None:
+    while True:
+        await asyncio.sleep(_seconds_until(config.SELFTEST_HOUR))
+        try:
+            previous = selftest.last()
+            notes = _selftest_notes(previous, await selftest.run())
+            if notes:
+                await _alert("\n\n".join(notes))
+        except Exception:  # noqa: BLE001 — que un error raro no apague la autoprueba diaria
+            log.exception("error inesperado en la autoprueba diaria")
 
 
 async def _check_drive() -> None:
@@ -779,6 +841,9 @@ async def lifespan(_: FastAPI):
     pusher = None
     if config.VAULT_AUTOCOMMIT and config.VAULT_AUTOPUSH:
         pusher = asyncio.create_task(_vault_pusher())
+    unclean = _RUNNING_MARK.exists()
+    _RUNNING_MARK.write_text(datetime.now(timezone.utc).isoformat())
+    monitors = [asyncio.create_task(_startup_checks(unclean)), asyncio.create_task(_daily_selftest())]
 
     yield
 
@@ -791,6 +856,8 @@ async def lifespan(_: FastAPI):
     if _inflight:
         log.info("esperando %d trabajo(s) en curso antes de apagar", len(_inflight))
         await asyncio.wait(_inflight, timeout=SHUTDOWN_GRACE)
+    for task in monitors:
+        task.cancel()
     if pusher:
         pusher.cancel()
         # Lo último que commitearon los trabajos que acaban de terminar. Poco margen:
@@ -799,6 +866,7 @@ async def lifespan(_: FastAPI):
             await asyncio.wait_for(_push_vault(), timeout=15)
     if bot:
         await bot.close()
+    _RUNNING_MARK.unlink(missing_ok=True)  # apagado limpio
 
 
 app = FastAPI(title="Orchestrator Gateway", version="2.0.0", lifespan=lifespan)
@@ -830,6 +898,7 @@ async def health() -> dict:
         "vault": str(config.VAULT_PATH),
         "vault_push": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _push.items()},
         "drive": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _drive.items()},
+        "autoprueba": selftest.last(),
         "projects": vault.list_projects(),
         "models": config.MODELS,
     }
@@ -1023,6 +1092,17 @@ async def start_design(body: DesignIn, x_orc_job: str = Header(default="")) -> d
         "status": "iniciado",
         "siguiente": "Terminá tu turno: el usuario ve el progreso y las capturas, y el sistema te despierta al terminar.",
     }
+
+
+@app.post("/autoprueba", dependencies=[Depends(auth)])
+async def run_selftest() -> dict:
+    """Corre la autoprueba de los motores ya, y avisa por Telegram si algo falla."""
+    previous = selftest.last()
+    result = await selftest.run()
+    notes = _selftest_notes(previous, result)
+    if notes:
+        await _alert("\n\n".join(notes))
+    return result
 
 
 @app.post("/drive/revision", dependencies=[Depends(auth)])

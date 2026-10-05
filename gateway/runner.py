@@ -358,6 +358,7 @@ async def run_claude(
     process.stdin.close()
 
     result_event: dict | None = None
+    init: dict = {}
     lines: list[str] = []
     last_by_tool: dict[str, dict] = {}
 
@@ -374,6 +375,10 @@ async def run_claude(
                 continue
             if event.get("type") == "result":
                 result_event = event
+            elif event.get("type") == "system" and event.get("subtype") == "init":
+                # Lo que Claude cargó de verdad: la autoprueba verifica que siga aislado.
+                init.update(tools=event.get("tools") or [], mcp_servers=event.get("mcp_servers") or [],
+                            plugins=event.get("plugins") or [])
             elif event.get("type") == "assistant":
                 for item in (event.get("message") or {}).get("content") or []:
                     if item.get("type") == "tool_use":
@@ -396,6 +401,7 @@ async def run_claude(
         raise RuntimeError(f"claude no devolvió un resultado (código {process.returncode}): {tail}")
 
     data = _claude_result(result_event)
+    data["init"] = init
     denied = data["denied_actions"]
     if denied and not data["response"].strip():
         detail = _denied_detail(denied, last_by_tool)

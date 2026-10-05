@@ -96,6 +96,11 @@ CLAUDE_BIN = os.environ.get("CLAUDE_BIN", shutil.which("claude") or "claude")
 RCLONE_BIN = os.environ.get("RCLONE_BIN", shutil.which("rclone") or str(Path.home() / ".local/bin/rclone"))
 DRIVE_REMOTE = os.environ.get("DRIVE_REMOTE", "drive-backups")
 DRIVE_ALERT_GB = float(os.environ.get("DRIVE_ALERT_GB", "14"))
+# Autoprueba de los motores (al arrancar y una vez por día, a SELFTEST_HOUR hora local),
+# con el modelo más barato de cada uno.
+SELFTEST_AGY_MODEL = os.environ.get("SELFTEST_AGY_MODEL", "gemini-3.8-flash-low")
+SELFTEST_CLAUDE_MODEL = os.environ.get("SELFTEST_CLAUDE_MODEL", "claude-haiku-4-5")
+SELFTEST_HOUR = int(os.environ.get("SELFTEST_HOUR", "9"))
 # Donde agy guarda lo que genera cada conversación (por ejemplo, las imágenes).
 AGY_BRAIN_DIR = Path(os.environ.get("AGY_BRAIN_DIR", Path.home() / ".gemini/antigravity-cli/brain"))
 

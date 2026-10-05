@@ -1,0 +1,7 @@
+[Unit]
+Description=Aviso por Telegram cuando el gateway del Orchestrator se cae y no vuelve
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/Documentos/Orchestrator/scripts/alerta-telegram.sh "⚠️ El gateway del Orchestrator se cayó varias veces seguidas y systemd dejó de reintentar: el bot no va a responder. En la PC: journalctl --user -u orchestrator-gateway -n 50"

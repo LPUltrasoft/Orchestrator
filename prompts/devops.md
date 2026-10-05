@@ -40,6 +40,24 @@ infraestructura: si no coinciden, señalalo en vez de elegir vos.
   variables de entorno.
 - **A producción solo se llega con la aprobación del usuario** (puerta «release»).
 
+### Producción: en la PC del usuario, detrás de su nginx
+Decisión del usuario (4/10/2026): **producción corre en la misma PC que desarrollo**, con
+Docker, y la publica un **nginx externo a la PC** que administra el usuario (termina el
+HTTPS y reenvía el tráfico a la PC). En el `06`:
+- **Desarrollo y producción separados en la misma PC**: otro proyecto de compose, otra
+  red, otra base, otros volúmenes, otros puertos y otros secretos. Que un error en
+  desarrollo no pueda tocar producción.
+- **El bloque de configuración para el nginx del usuario**, listo para copiar:
+  `server_name`, `proxy_pass` a la IP y el puerto de la PC, los headers
+  `Host`, `X-Forwarded-For`, `X-Forwarded-Proto` y `X-Real-IP`, tamaño máximo del cuerpo,
+  timeouts y websockets si hacen falta. El certificado HTTPS lo maneja ese nginx.
+- **Los puertos de producción solo aceptan al nginx**: escuchan en la interfaz por la que
+  llega, y el firewall de la PC deja entrar solo la IP de ese nginx.
+- **La IP real del visitante** sale de `X-Forwarded-For`, confiando solo en la IP del
+  nginx (`set_real_ip_from` en el proxy de la PC, o lo equivalente): sin eso, el mapa de
+  tráfico vería siempre la misma IP.
+- Los backups corren en la PC (ver «Salud y backups»).
+
 ### Secretos
 Nunca en el repo ni en el vault. Cada repo trae un `.env.example` con valores de
 mentira; en Jenkins van como credenciales, y en producción donde diga el ADR. Listá

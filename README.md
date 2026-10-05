@@ -339,6 +339,18 @@ hacen que el gateway lea la salida de `/quota` y de `/usage` de esos archivos.
 
 ## Operación
 
+- **Autoprueba de los motores** (`gateway/selftest.py`): al arrancar (si la última buena
+  tiene más de una hora o cambió una versión) y todos los días a las `SELFTEST_HOUR` (9),
+  un "respondé OK" a agy (`gemini-3.8-flash-low`) y a Claude (`claude-haiku-4-5`). En
+  Claude además verifica el `init`: sin Bash, sin MCP y sin plugins del usuario. Avisa por
+  Telegram si falla (sesión vencida, aislamiento roto), si se recupera y si se actualizó
+  agy o Claude. A demanda: `POST /autoprueba`. Resultado en `/health` → `autoprueba`.
+- **Apagado sucio**: `state/en_marcha` existe mientras el gateway corre; si al arrancar
+  ya estaba (corte de luz, cuelgue), avisa por Telegram.
+- **Si el gateway no logra levantar**: 5 caídas en 5 minutos → systemd deja de reintentar
+  y `orchestrator-alerta.service` avisa por Telegram con `scripts/alerta-telegram.sh`
+  (sin pasar por el gateway). `RestartMode=direct` evita el aviso en cada reintento y
+  `SuccessExitStatus=143` que un reinicio normal cuente como falla.
 - **El vault se sube solo a GitHub**: cada 30 s, si hay commits sin subir. Si falla más
   de 30 minutos, avisa por Telegram (y cuando se recupera); al apagarse hace un último
   push. Estado en `/health` → `vault_push`. Usa las credenciales de `gh auth login`.
